@@ -65,7 +65,7 @@ class SensorService : Service(), SensorEventListener {
     private var baselineTempStd = 0.2
     private var baselineReady = false    // 베이스라인 학습 완료 여부
     private var learningMinutes = 0      // 학습 경과 시간(분)
-    private val BASELINE_MIN_MINUTES = 30 // 최소 30분 후 베이스라인 활성화 (시연용, 실제는 180분)
+    private val BASELINE_MIN_MINUTES = 10 // 테스트: 10분, 실제 배포: 180분
 
     // ──── 상태 관리 (단계 2~4) ────
     enum class WorkerState {
@@ -109,26 +109,51 @@ class SensorService : Service(), SensorEventListener {
 
     private fun registerSensors() {
         // 심박수
-        sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        val hrSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+        if (hrSensor != null) {
+            sensorManager.registerListener(this, hrSensor, SensorManager.SENSOR_DELAY_NORMAL)
+            Log.d(TAG, "✅ Heart rate sensor registered: ${hrSensor.name}")
+        } else {
+            Log.e(TAG, "❌ Heart rate sensor NOT FOUND")
         }
+
         // 가속도계 (움직임 감지용)
-        sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        val accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        if (accelSensor != null) {
+            sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
+            Log.d(TAG, "✅ Accelerometer registered")
+        } else {
+            Log.e(TAG, "❌ Accelerometer NOT FOUND")
         }
+
         // SpO₂ (Samsung 전용)
-        sensorManager.getSensorList(Sensor.TYPE_ALL).find {
+        val spo2Sensor = sensorManager.getSensorList(Sensor.TYPE_ALL).find {
             it.stringType.contains("spo2", true) || it.stringType.contains("oxygen", true)
-        }?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
+        if (spo2Sensor != null) {
+            sensorManager.registerListener(this, spo2Sensor, SensorManager.SENSOR_DELAY_NORMAL)
+            Log.d(TAG, "✅ SpO₂ sensor registered: ${spo2Sensor.stringType}")
+        } else {
+            Log.w(TAG, "⚠ SpO₂ sensor not found (Samsung Health SDK 필요)")
+        }
+
+        // 사용 가능한 전체 센서 목록 로그
+        Log.d(TAG, "Available sensors: ${sensorManager.getSensorList(Sensor.TYPE_ALL).map { "${it.name}(${it.stringType})" }.joinToString(", ")}")
     }
+
+    private var hrLogCount = 0
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor.type) {
             Sensor.TYPE_HEART_RATE -> {
                 val hr = event.values[0].toInt()
-                if (hr > 0) heartRate = hr
+                if (hr > 0) {
+                    heartRate = hr
+                    hrLogCount++
+                    if (hrLogCount % 10 == 1) { // 10번에 1번 로그
+                        Log.d(TAG, "💓 HR=$hr, samples=${hrHistory.size}, baselineReady=$baselineReady")
+                    }
+                }
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 accelX = event.values[0]
@@ -166,6 +191,9 @@ class SensorService : Service(), SensorEventListener {
 
                 // 단계 1: 베이스라인 학습/업데이트
                 updateBaseline()
+                if (hrHistory.size % 20 == 0 && hrHistory.size > 0) {
+                    Log.d(TAG, "📊 Learning: samples=${hrHistory.size}, HR=$heartRate, baseline=$baselineReady, mean=${baselineHrMean.toInt()}")
+                }
 
                 // 단계 2~4: 상태 판단
                 evaluateState()
