@@ -52,42 +52,61 @@ object BleAlertService {
 
     /** 평상시: 정상 상태 광고 */
     fun startNormalAdvertise(context: Context, workerId: String) {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
-        advertiser = adapter.bluetoothLeAdvertiser ?: return
+        try {
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+            advertiser = adapter.bluetoothLeAdvertiser ?: return
 
-        val data = buildAdvertiseData(workerId, false)
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)  // 저전력
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_LOW)
-            .setConnectable(false)
-            .setTimeout(0)  // 무한
-            .build()
+            if (android.os.Build.VERSION.SDK_INT >= 31 &&
+                context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_ADVERTISE permission not granted, skipping")
+                return
+            }
 
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
-        Log.d(TAG, "Normal advertise started: $workerId")
+            val data = buildAdvertiseData(workerId, false)
+            val settings = AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_LOW)
+                .setConnectable(false)
+                .setTimeout(0)
+                .build()
+
+            advertiser?.startAdvertising(settings, data, advertiseCallback)
+            Log.d(TAG, "Normal advertise started: $workerId")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "BLE advertise failed: ${e.message}")
+        }
     }
 
     /** 응급 시: 긴급 경보 광고 */
     fun broadcastEmergency(context: Context, workerId: String) {
-        isEmergency = true
-        emergencyWorkerId = workerId
+        try {
+            isEmergency = true
+            emergencyWorkerId = workerId
 
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
-        advertiser = adapter.bluetoothLeAdvertiser ?: return
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+            advertiser = adapter.bluetoothLeAdvertiser ?: return
 
-        // 기존 광고 중지 후 긴급 모드로 재시작
-        advertiser?.stopAdvertising(advertiseCallback)
+            if (android.os.Build.VERSION.SDK_INT >= 31 &&
+                context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_ADVERTISE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_ADVERTISE permission not granted")
+                return
+            }
 
-        val data = buildAdvertiseData(workerId, true)
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)  // 최대 빈도
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)     // 최대 출력
-            .setConnectable(false)
-            .setTimeout(0)
-            .build()
+            advertiser?.stopAdvertising(advertiseCallback)
 
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
-        Log.w(TAG, "🚨 EMERGENCY advertise started: $workerId")
+            val data = buildAdvertiseData(workerId, true)
+            val settings = AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(false)
+                .setTimeout(0)
+                .build()
+
+            advertiser?.startAdvertising(settings, data, advertiseCallback)
+            Log.w(TAG, "EMERGENCY advertise started: $workerId")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Emergency advertise failed: ${e.message}")
+        }
     }
 
     /** 경보 해제 */
@@ -127,21 +146,30 @@ object BleAlertService {
 
     /** 주변 SafePulse 기기 스캔 시작 */
     fun startScanning(context: Context) {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
-        scanner = adapter.bluetoothLeScanner ?: return
+        try {
+            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+            scanner = adapter.bluetoothLeScanner ?: return
 
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
+            if (android.os.Build.VERSION.SDK_INT >= 31 &&
+                context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "BLUETOOTH_SCAN permission not granted, skipping")
+                return
+            }
 
-        // 필터: Manufacturer ID 0xDADA
-        val filter = ScanFilter.Builder()
-            .setManufacturerData(0xDADA, byteArrayOf())
-            .build()
+            val settings = ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build()
 
-        scanner?.startScan(listOf(filter), settings, scanCallback(context))
-        isScanning = true
-        Log.d(TAG, "BLE scan started")
+            val filter = ScanFilter.Builder()
+                .setManufacturerData(0xDADA, byteArrayOf())
+                .build()
+
+            scanner?.startScan(listOf(filter), settings, scanCallback(context))
+            isScanning = true
+            Log.d(TAG, "BLE scan started")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "BLE scan failed: ${e.message}")
+        }
     }
 
     fun stopScanning() {

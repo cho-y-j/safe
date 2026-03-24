@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SafePulse" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#0A1118</item>
+        <item name="colorPrimary">#2E75B6</item>
+        <item name="colorPrimaryDark">#1B5A94</item>
+        <item name="colorAccent">#43A047</item>
+        <item name="android:textColorPrimary">#E0E6ED</item>
+        <item name="android:textColorSecondary">#7A8FA3</item>
+    </style>
+</resources>

@@ -80,8 +80,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestPermissions()
-        startServices()
-        startBle()
         loadAIInsight()
     }
 
@@ -90,12 +88,29 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.BODY_SENSORS,
             Manifest.permission.ACTIVITY_RECOGNITION,
             Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.POST_NOTIFICATIONS,
         )
         val needed = perms.filter {
             ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toTypedArray(), 100)
+        } else {
+            // 권한 이미 있으면 바로 시작
+            startServices()
+            startBle()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 100) {
+            // 권한 승인 후 서비스 시작
+            startServices()
+            startBle()
         }
     }
 
