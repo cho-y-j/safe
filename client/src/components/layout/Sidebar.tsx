@@ -16,6 +16,7 @@ const DRAWER_WIDTH = 190;
 
 const menuItems = [
   { path: '/', label: '통합 상황판', icon: <DashboardIcon /> },
+  { path: '/map', label: '지도 현황', icon: <MapIcon /> },
   { path: '/workers', label: '작업자 모니터링', icon: <PeopleIcon /> },
   { path: '/public-data', label: '공공데이터 분석', icon: <CloudIcon /> },
   { path: '/congestion', label: '혼잡 예측', icon: <MapIcon /> },

@@ -10,6 +10,7 @@ import PublicData from './components/publicData/PublicData';
 import Congestion from './components/congestion/Congestion';
 import Reports from './components/reports/Reports';
 import AdminPanel from './components/admin/AdminPanel';
+import MapView from './components/map/MapView';
 
 export default function App() {
   useWebSocket();
@@ -27,6 +28,7 @@ export default function App() {
         <Box sx={{ flex: 1, p: 1, overflow: 'auto' }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/map" element={<MapView />} />
             <Route path="/workers" element={<Workers />} />
             <Route path="/public-data" element={<PublicData />} />
             <Route path="/congestion" element={<Congestion />} />
