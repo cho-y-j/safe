@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A1118"
+    android:padding="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal">
+
+        <!-- 로고 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SafePulse"
+            android:textSize="16sp"
+            android:textColor="#2E75B6"
+            android:textStyle="bold"
+            android:layout_marginTop="4dp" />
+
+        <!-- 서버 연결 상태 -->
+        <TextView
+            android:id="@+id/tvConnection"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="○ 연결 대기"
+            android:textSize="10sp"
+            android:textColor="#FFB74D"
+            android:layout_marginBottom="6dp" />
+
+        <!-- AI 상태 요약 -->
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="AI 분석 대기중..."
+            android:textSize="11sp"
+            android:textColor="#B0BEC5"
+            android:gravity="center"
+            android:background="#111D29"
+            android:padding="6dp"
+            android:layout_marginBottom="6dp" />
+
+        <!-- 심박수 + SpO₂ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <!-- 심박수 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="#111D29"
+                android:padding="8dp"
+                android:layout_marginEnd="4dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="💓"
+                    android:textSize="20sp" />
+
+                <TextView
+                    android:id="@+id/tvHeartRate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="--"
+                    android:textSize="28sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="bpm"
+                    android:textSize="10sp"
+                    android:textColor="#7A8FA3" />
+            </LinearLayout>
+
+            <!-- SpO₂ -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="#111D29"
+                android:padding="8dp"
+                android:layout_marginStart="4dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🫁"
+                    android:textSize="20sp" />
+
+                <TextView
+                    android:id="@+id/tvSpO2"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="--%"
+                    android:textSize="28sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="SpO₂"
+                    android:textSize="10sp"
+                    android:textColor="#7A8FA3" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- AI 위험도 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#111D29"
+            android:padding="8dp"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🛡 AI 위험도"
+                android:textSize="10sp"
+                android:textColor="#7A8FA3" />
+
+            <TextView
+                android:id="@+id/tvRiskLevel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="안전"
+                android:textSize="22sp"
+                android:textColor="#66BB6A"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvRecommendation"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="정상 운영"
+                android:textSize="10sp"
+                android:textColor="#B0BEC5"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <!-- 알림 배너 (새 알림 시 표시) -->
+        <LinearLayout
+            android:id="@+id/alertBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FF9800"
+            android:padding="6dp"
+            android:layout_marginTop="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvLastAlert"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="11sp"
+                android:textColor="#FFFFFF"
+                android:maxLines="2" />
+        </LinearLayout>
+
+        <!-- 알림 내역 버튼 -->
+        <Button
+            android:id="@+id/btnAlerts"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:text="📋 관제센터 알림 내역"
+            android:textSize="12sp"
+            android:textColor="#2E75B6"
+            android:backgroundTint="#111D29"
+            android:layout_marginTop="6dp" />
+
+    </LinearLayout>
+</ScrollView>
