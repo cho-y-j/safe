@@ -9,6 +9,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import CloudIcon from '@mui/icons-material/Cloud';
 import MapIcon from '@mui/icons-material/Map';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { useDashboardStore } from '../../stores/dashboardStore';
 
 const DRAWER_WIDTH = 190;
@@ -19,6 +20,7 @@ const menuItems = [
   { path: '/public-data', label: '공공데이터 분석', icon: <CloudIcon /> },
   { path: '/congestion', label: '혼잡 예측', icon: <MapIcon /> },
   { path: '/reports', label: '이력 / 리포트', icon: <AssessmentIcon /> },
+  { path: '/admin', label: '인력/기기 관리', icon: <SettingsIcon /> },
 ];
 
 export default function Sidebar() {

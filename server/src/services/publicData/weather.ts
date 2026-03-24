@@ -40,31 +40,46 @@ export async function fetchWeather(): Promise<WeatherData> {
   const cached = await cacheGet<WeatherData>(CACHE_KEY);
   if (cached) return cached;
 
-  // 항공기상 API는 별도 인증 체계 → 데모 데이터 기반 + 실제 API 시도
+  // 기상청 초단기실황 API (인천공항 격자: nx=55, ny=124)
   try {
     const apiKey = process.env.DATA_GO_KR_API_KEY;
     if (apiKey) {
-      // 인천공항 기상 정보 API
-      const url = 'https://apis.data.go.kr/B551177/StatusOfPassengerWorldWeatherInfo/getPassengerDeparturesWorldWeather';
+      const url = 'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst';
       const now = new Date();
+      // API는 정시 기준 → 현재 시각의 정시
+      const baseDate = now.toISOString().slice(0, 10).replace(/-/g, '');
+      let baseHour = now.getHours();
+      if (now.getMinutes() < 40) baseHour = baseHour - 1; // 40분 전이면 이전 시간
+      if (baseHour < 0) baseHour = 23;
+      const baseTime = String(baseHour).padStart(2, '0') + '00';
 
       const res = await axios.get(url, {
         params: {
           serviceKey: apiKey,
-          numOfRows: 1,
+          numOfRows: 10,
           pageNo: 1,
-          type: 'json',
+          dataType: 'JSON',
+          base_date: baseDate,
+          base_time: baseTime,
+          nx: 55,
+          ny: 124,
         },
         timeout: 10000,
       });
 
-      const items = res.data?.response?.body?.items;
+      const items = res.data?.response?.body?.items?.item;
       if (items && items.length > 0) {
-        const item = items[0];
-        let temp = parseFloat(item.temp) || 20;
-        let humidity = parseInt(item.humidity) || 60;
-        let windSpeed = parseFloat(item.wind_speed) || 3;
-        let windDir = item.wind_dir || 'W';
+        let temp = 20, humidity = 60, windSpeed = 3, windDir = 'W';
+        for (const item of items) {
+          if (item.category === 'T1H') temp = parseFloat(item.obsrValue);
+          if (item.category === 'REH') humidity = parseInt(item.obsrValue);
+          if (item.category === 'WSD') windSpeed = parseFloat(item.obsrValue);
+          if (item.category === 'VEC') {
+            const deg = parseInt(item.obsrValue);
+            const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+            windDir = dirs[Math.round(deg / 45) % 8];
+          }
+        }
 
         const feelsLike = calcFeelsLike(temp, windSpeed, humidity);
         const data: WeatherData = {

@@ -36,7 +36,7 @@ export function useWebSocket() {
       useInsightStore.getState().setInsight(data);
       if (data.warnings?.length > 0) {
         data.warnings.forEach((w: string) => {
-          addEvent({ level: 'warning', message: `🧠 AI: ${w}` });
+          addEvent({ level: 'warning', message: `⚡ AI: ${w}` });
         });
       }
     });

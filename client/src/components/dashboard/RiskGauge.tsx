@@ -95,7 +95,7 @@ export default function RiskGauge() {
     <Card>
       <CardContent sx={{ py: 2 }}>
         <Typography variant="subtitle2" sx={{ color: '#2E75B6', fontWeight: 700, mb: 1.5 }}>
-          🧠 AI 복합 위험도 분석
+          ⚡ AI 복합 위험도 분석
         </Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 2 }}>

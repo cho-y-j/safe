@@ -1,8 +1,44 @@
 import { Router } from 'express';
-import { Alert } from '../models';
+import { Alert, Worker } from '../models';
 import { Op } from 'sequelize';
+import { findNearestAED } from '../services/aed';
 
 const router = Router();
+
+// 긴급 알림 수신 (Galaxy Watch → 서버)
+router.post('/emergency', async (req, res) => {
+  try {
+    const { workerId, message, heartRate, spo2, bodyTemp } = req.body;
+
+    const worker = await Worker.findByPk(workerId);
+    const zone = worker?.zone || 'T1-B';
+    const nearestAed = findNearestAED(zone);
+
+    const alertMsg = message || `🚨 작업자 ${workerId} 응급 — 심박 ${heartRate}bpm, SpO₂ ${spo2}%`;
+
+    const alert = await Alert.create({
+      type: 'emergency',
+      level: 'danger',
+      message: alertMsg,
+      workerId,
+      zone,
+      scenario: 'p2p_emergency',
+    });
+
+    // WebSocket으로 모든 클라이언트에 긴급 알림 + AED 정보
+    const { io } = require('../app');
+    io.emit('emergency', {
+      alert,
+      worker: worker ? { id: worker.id, name: worker.name, role: worker.role, zone: worker.zone, location: worker.location } : null,
+      nearestAed: nearestAed ? { id: nearestAed.aed.id, location: nearestAed.aed.location, distance: nearestAed.distance } : null,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({ success: true, alert, nearestAed });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create emergency alert' });
+  }
+});
 
 // 최근 알림 목록
 router.get('/', async (req, res) => {

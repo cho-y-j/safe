@@ -9,6 +9,7 @@ import Workers from './components/workers/Workers';
 import PublicData from './components/publicData/PublicData';
 import Congestion from './components/congestion/Congestion';
 import Reports from './components/reports/Reports';
+import AdminPanel from './components/admin/AdminPanel';
 
 export default function App() {
   useWebSocket();
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/public-data" element={<PublicData />} />
             <Route path="/congestion" element={<Congestion />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/admin" element={<AdminPanel />} />
           </Routes>
         </Box>
       </Box>

@@ -226,7 +226,7 @@ export default function Workers() {
             {/* AI 분석 */}
             <Card>
               <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                <Typography variant="subtitle2" sx={{ color: '#2E75B6', fontWeight: 700, mb: 1.5 }}>🧠 AI 분석</Typography>
+                <Typography variant="subtitle2" sx={{ color: '#2E75B6', fontWeight: 700, mb: 1.5 }}>⚡ AI 분석</Typography>
 
                 {/* 피로도 바 */}
                 <Box sx={{ mb: 1.5 }}>

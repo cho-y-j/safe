@@ -10,7 +10,10 @@ import { initRedis } from './services/redis';
 import { startSchedulers } from './services/scheduler';
 import { setupWebSocket } from './services/websocket';
 import { startWearableSimulator } from './services/simulator/wearable';
+import { initAED } from './services/aed';
 import publicDataRoutes from './routes/publicData';
+import aedRoutes from './routes/aed';
+import adminRoutes from './routes/admin';
 import workerRoutes from './routes/workers';
 import alertRoutes from './routes/alerts';
 import scenarioRoutes from './routes/scenarios';
@@ -31,6 +34,8 @@ app.use('/api/public-data', publicDataRoutes);
 app.use('/api/workers', workerRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/scenarios', scenarioRoutes);
+app.use('/api/aed', aedRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -52,6 +57,8 @@ async function bootstrap() {
 
     startSchedulers(io);
     console.log('[Scheduler] Public data fetchers started');
+
+    initAED();
 
     startWearableSimulator(io);
     console.log('[Simulator] Wearable simulator started');

@@ -119,7 +119,7 @@ export default function PublicData() {
       <Card>
         <CardContent>
           <Typography variant="subtitle2" sx={{ color: '#2E75B6', fontWeight: 700, mb: 2 }}>
-            🧠 AI 융합 위험 예측 (공공데이터 3종 결합)
+            ⚡ AI 융합 위험 예측 (공공데이터 3종 결합)
           </Typography>
           <Box sx={{ p: 2, background: 'rgba(255,255,255,0.02)', borderRadius: 2 }}>
             <Typography sx={{ fontSize: 13, color: '#E0E6ED', mb: 1 }}>
