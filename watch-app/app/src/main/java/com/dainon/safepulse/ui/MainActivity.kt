@@ -4,9 +4,7 @@ import android.Manifest
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.TextView
-import android.widget.Button
-import android.widget.LinearLayout
+import android.widget.*
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -30,18 +28,35 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLastAlert: TextView
     private lateinit var alertBanner: LinearLayout
 
+    // 학습 UI
+    private lateinit var learningCard: LinearLayout
+    private lateinit var baselineCard: LinearLayout
+    private lateinit var tvLearningTitle: TextView
+    private lateinit var tvLearningTime: TextView
+    private lateinit var tvLearningSamples: TextView
+    private lateinit var tvLearningNote: TextView
+    private lateinit var pbLearning: ProgressBar
+    private lateinit var tvBaselineHR: TextView
+    private lateinit var tvBaselineUpdate: TextView
+
     private val sensorReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val hr = intent.getIntExtra("heartRate", 0)
             val spo2 = intent.getIntExtra("spo2", 0)
             val connected = intent.getBooleanExtra("connected", false)
+            val baselineReady = intent.getBooleanExtra("baselineReady", false)
+            val baselineHr = intent.getIntExtra("baselineHr", 0)
+            val stateKr = intent.getStringExtra("stateKr") ?: "정상"
+            val noMovementSec = intent.getIntExtra("noMovementSec", 0)
 
+            // 심박/SpO₂
             tvHeartRate.text = if (hr > 0) "$hr" else "--"
             tvSpO2.text = if (spo2 > 0) "$spo2%" else "--%"
             tvConnection.text = if (connected) "● 서버 연결" else "○ 연결 대기"
-            tvConnection.setTextColor(
-                if (connected) 0xFF66BB6A.toInt() else 0xFFFFB74D.toInt()
-            )
+            tvConnection.setTextColor(if (connected) 0xFF66BB6A.toInt() else 0xFFFFB74D.toInt())
+
+            // 학습 상태 업데이트
+            updateLearningUI(baselineReady, baselineHr, hr)
         }
     }
 
@@ -49,10 +64,8 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val level = intent.getStringExtra("level") ?: "info"
             val message = intent.getStringExtra("message") ?: ""
-
             alertBanner.visibility = View.VISIBLE
             tvLastAlert.text = message
-
             val color = when (level) {
                 "danger" -> 0xFFE53935.toInt()
                 "warning" -> 0xFFFF9800.toInt()
@@ -62,10 +75,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val p2pReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            val workerId = intent.getStringExtra("workerId") ?: "?"
+            val distance = intent.getDoubleExtra("distance", 99.0)
+            val intensity = intent.getIntExtra("intensity", 0)
+            alertBanner.visibility = View.VISIBLE
+            alertBanner.setBackgroundColor(0xFFE53935.toInt())
+            tvLastAlert.text = "🚨 $workerId 긴급! ${String.format("%.1f", distance)}m | 강도 $intensity%"
+        }
+    }
+
+    // 학습 타이머
+    private var learningStartTime = 0L
+    private val LEARNING_DURATION_MS = 10 * 60 * 1000L  // 10분 (테스트용)
+    private var isBaselineComplete = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // 기본 UI
         tvStatus = findViewById(R.id.tvStatus)
         tvHeartRate = findViewById(R.id.tvHeartRate)
         tvSpO2 = findViewById(R.id.tvSpO2)
@@ -75,13 +105,112 @@ class MainActivity : AppCompatActivity() {
         tvLastAlert = findViewById(R.id.tvLastAlert)
         alertBanner = findViewById(R.id.alertBanner)
 
+        // 학습 UI
+        learningCard = findViewById(R.id.learningCard)
+        baselineCard = findViewById(R.id.baselineCard)
+        tvLearningTitle = findViewById(R.id.tvLearningTitle)
+        tvLearningTime = findViewById(R.id.tvLearningTime)
+        tvLearningSamples = findViewById(R.id.tvLearningSamples)
+        tvLearningNote = findViewById(R.id.tvLearningNote)
+        pbLearning = findViewById(R.id.pbLearning)
+        tvBaselineHR = findViewById(R.id.tvBaselineHR)
+        tvBaselineUpdate = findViewById(R.id.tvBaselineUpdate)
+
         findViewById<Button>(R.id.btnAlerts).setOnClickListener {
             startActivity(Intent(this, AlertListActivity::class.java))
+        }
+
+        // 이전 학습 완료 상태 복원
+        val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+        isBaselineComplete = prefs.getBoolean("baselineComplete", false)
+        learningStartTime = prefs.getLong("learningStart", System.currentTimeMillis())
+
+        if (isBaselineComplete) {
+            showBaselineComplete(prefs.getInt("baselineHR", 75))
+        } else {
+            if (learningStartTime == 0L) {
+                learningStartTime = System.currentTimeMillis()
+                prefs.edit().putLong("learningStart", learningStartTime).apply()
+            }
+            startLearningTimer()
         }
 
         requestPermissions()
         loadAIInsight()
     }
+
+    // ═══ 학습 타이머 ═══
+
+    private fun startLearningTimer() {
+        learningCard.visibility = View.VISIBLE
+        baselineCard.visibility = View.GONE
+
+        scope.launch {
+            while (!isBaselineComplete && isActive) {
+                val elapsed = System.currentTimeMillis() - learningStartTime
+                val remaining = LEARNING_DURATION_MS - elapsed
+                val progress = ((elapsed.toFloat() / LEARNING_DURATION_MS) * 100).toInt().coerceIn(0, 100)
+
+                if (remaining <= 0) {
+                    // 학습 완료!
+                    isBaselineComplete = true
+                    val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+                    prefs.edit()
+                        .putBoolean("baselineComplete", true)
+                        .putInt("baselineHR", SensorService.lastBaselineHR)
+                        .apply()
+                    showBaselineComplete(SensorService.lastBaselineHR)
+                    break
+                }
+
+                val min = (remaining / 60000).toInt()
+                val sec = ((remaining % 60000) / 1000).toInt()
+                val samples = (elapsed / 5000).toInt()  // 5초 간격
+
+                pbLearning.progress = progress
+                tvLearningTime.text = "남은 시간: ${min}분 ${String.format("%02d", sec)}초"
+                tvLearningSamples.text = "수집된 샘플: ${samples}개"
+
+                if (progress < 30) {
+                    tvLearningTitle.text = "베이스라인 학습 중..."
+                    tvLearningNote.text = "학습 전에는 기본 데이터로 작동합니다"
+                } else if (progress < 70) {
+                    tvLearningTitle.text = "패턴 분석 중..."
+                    tvLearningNote.text = "개인 생체 패턴을 추출하고 있습니다"
+                } else {
+                    tvLearningTitle.text = "베이스라인 확정 중..."
+                    tvLearningNote.text = "95% 신뢰구간을 계산하고 있습니다"
+                }
+
+                delay(1000)
+            }
+        }
+    }
+
+    private fun showBaselineComplete(baselineHR: Int) {
+        learningCard.visibility = View.GONE
+        baselineCard.visibility = View.VISIBLE
+        tvBaselineHR.text = "내 평균 심박: ${if (baselineHR > 0) baselineHR else "--"}bpm"
+        tvBaselineUpdate.text = "매일 자동 업데이트됩니다 (EMA 방식)"
+    }
+
+    private fun updateLearningUI(baselineReady: Boolean, baselineHr: Int, currentHr: Int) {
+        if (baselineReady && !isBaselineComplete) {
+            isBaselineComplete = true
+            val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+            prefs.edit()
+                .putBoolean("baselineComplete", true)
+                .putInt("baselineHR", baselineHr)
+                .apply()
+            showBaselineComplete(baselineHr)
+        }
+
+        if (isBaselineComplete && baselineHr > 0) {
+            tvBaselineHR.text = "내 평균 심박: ${baselineHr}bpm (현재: ${currentHr})"
+        }
+    }
+
+    // ═══ 권한 + 서비스 ═══
 
     private fun requestPermissions() {
         val perms = arrayOf(
@@ -99,7 +228,6 @@ class MainActivity : AppCompatActivity() {
         if (needed.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toTypedArray(), 100)
         } else {
-            // 권한 이미 있으면 바로 시작
             startServices()
             startBle()
         }
@@ -108,7 +236,6 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100) {
-            // 권한 승인 후 서비스 시작
             startServices()
             startBle()
         }
@@ -120,7 +247,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startBle() {
-        // BLE 정상 상태 광고 시작 + 주변 스캔
         BleAlertService.startNormalAdvertise(this, SensorService.WORKER_ID)
         BleAlertService.startScanning(this)
     }
@@ -142,32 +268,16 @@ class MainActivity : AppCompatActivity() {
                         tvStatus.text = risk.summary
                     }
                 } catch (_: Exception) {}
-                delay(30000) // 30초마다 갱신
+                delay(30000)
             }
-        }
-    }
-
-    // P2P BLE 경보 수신
-    private val p2pReceiver = object : BroadcastReceiver() {
-        override fun onReceive(ctx: Context, intent: Intent) {
-            val workerId = intent.getStringExtra("workerId") ?: "?"
-            val distance = intent.getDoubleExtra("distance", 99.0)
-            val intensity = intent.getIntExtra("intensity", 0)
-
-            alertBanner.visibility = View.VISIBLE
-            alertBanner.setBackgroundColor(0xFFE53935.toInt())
-            tvLastAlert.text = "🚨 $workerId 긴급! ${String.format("%.1f", distance)}m | 강도 $intensity%"
         }
     }
 
     override fun onResume() {
         super.onResume()
-        registerReceiver(sensorReceiver, IntentFilter("com.dainon.safepulse.SENSOR_UPDATE"),
-            RECEIVER_NOT_EXPORTED)
-        registerReceiver(alertReceiver, IntentFilter("com.dainon.safepulse.NEW_ALERT"),
-            RECEIVER_NOT_EXPORTED)
-        registerReceiver(p2pReceiver, IntentFilter("com.dainon.safepulse.P2P_ALERT"),
-            RECEIVER_NOT_EXPORTED)
+        registerReceiver(sensorReceiver, IntentFilter("com.dainon.safepulse.SENSOR_UPDATE"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(alertReceiver, IntentFilter("com.dainon.safepulse.NEW_ALERT"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(p2pReceiver, IntentFilter("com.dainon.safepulse.P2P_ALERT"), RECEIVER_NOT_EXPORTED)
     }
 
     override fun onPause() {

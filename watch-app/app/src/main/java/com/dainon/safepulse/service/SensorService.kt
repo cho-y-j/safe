@@ -39,6 +39,9 @@ class SensorService : Service(), SensorEventListener {
 
         var WORKER_ID = "W-001"
 
+        // 학습 상태 (Activity에서 접근)
+        var lastBaselineHR = 0
+
         // 확인 버튼 액션
         const val ACTION_ACKNOWLEDGE = "com.dainon.safepulse.ACKNOWLEDGE"
     }
@@ -205,13 +208,15 @@ class SensorService : Service(), SensorEventListener {
                 .average().let { sqrt(it) }.coerceAtLeast(3.0)
 
             if (baselineReady) {
-                // 점진적 업데이트
+                // 점진적 업데이트 (매일 자동)
                 baselineHrMean = baselineHrMean * (1 - alpha) + newMean * alpha
                 baselineHrStd = baselineHrStd * (1 - alpha) + newStd * alpha
+                lastBaselineHR = baselineHrMean.toInt()
             } else {
                 baselineHrMean = newMean
                 baselineHrStd = newStd
                 baselineReady = true
+                lastBaselineHR = baselineHrMean.toInt()
                 Log.d(TAG, "Baseline ready: HR mean=${baselineHrMean.toInt()}, std=${baselineHrStd.toInt()}")
             }
 
