@@ -195,18 +195,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateLearningUI(baselineReady: Boolean, baselineHr: Int, currentHr: Int) {
-        if (baselineReady && !isBaselineComplete) {
-            isBaselineComplete = true
-            val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
-            prefs.edit()
-                .putBoolean("baselineComplete", true)
-                .putInt("baselineHR", baselineHr)
-                .apply()
+        // 베이스라인 완료 시 → 학습 카드 숨기고 결과 표시
+        if (baselineReady && baselineHr > 0) {
+            if (!isBaselineComplete) {
+                isBaselineComplete = true
+                val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+                prefs.edit()
+                    .putBoolean("baselineComplete", true)
+                    .putInt("baselineHR", baselineHr)
+                    .apply()
+            }
             showBaselineComplete(baselineHr)
-        }
-
-        if (isBaselineComplete && baselineHr > 0) {
-            tvBaselineHR.text = "내 평균 심박: ${baselineHr}bpm (현재: ${currentHr})"
+            // 실시간 업데이트
+            tvBaselineHR.text = "안정 시 평균: ${baselineHr}bpm (현재: ${currentHr})"
         }
     }
 
