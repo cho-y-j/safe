@@ -98,10 +98,16 @@ class SensorService : Service(), SensorEventListener {
     private val SLEEP_VS_EMERGENCY_SEC = 30 // 잠/응급 판단 시간
     private val EMERGENCY_ESCALATION_SEC = 90 // 119 연동 시간
 
-    // ──── 모니터링 주기 ────
-    private var monitorIntervalMs = 5000L  // 기본 5초
-    private val NORMAL_INTERVAL = 5000L
-    private val ALERT_INTERVAL = 1000L     // 이상 시 1초
+    // ──── 모니터링 주기 (특허: 이중 모드 전력 관리) ────
+    private var monitorIntervalMs = 30000L   // 저전력 모드: 30초
+    private val NORMAL_INTERVAL = 30000L     // 평상시 30초 (배터리 24~48시간)
+    private val WATCH_INTERVAL = 10000L      // 추적 감시: 10초
+    private val ALERT_INTERVAL = 3000L       // 이상 감지 시: 3초
+    private val EMERGENCY_INTERVAL = 1000L   // 응급: 1초
+
+    // 서버 전송 주기 (센서 읽기보다 덜 자주)
+    private var serverSendCounter = 0
+    private val SERVER_SEND_EVERY_N = 2      // N번 센서 읽기마다 1번 전송
 
     override fun onCreate() {
         super.onCreate()
@@ -131,19 +137,20 @@ class SensorService : Service(), SensorEventListener {
 
     private fun registerSensors() {
         // 심박수
+        // 심박수 — 저전력 모드 (3초 간격 수신, OS가 자체 관리)
         val hrSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
         if (hrSensor != null) {
-            sensorManager.registerListener(this, hrSensor, SensorManager.SENSOR_DELAY_NORMAL)
-            Log.d(TAG, "✅ Heart rate sensor registered: ${hrSensor.name}")
+            sensorManager.registerListener(this, hrSensor, 3000000) // 3초 마이크로초
+            Log.d(TAG, "✅ Heart rate sensor registered (low-power): ${hrSensor.name}")
         } else {
             Log.e(TAG, "❌ Heart rate sensor NOT FOUND")
         }
 
-        // 가속도계 (움직임 감지용)
+        // 가속도계 — 움직임만 감지하면 되므로 저전력
         val accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         if (accelSensor != null) {
-            sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
-            Log.d(TAG, "✅ Accelerometer registered")
+            sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_UI) // ~60ms
+            Log.d(TAG, "✅ Accelerometer registered (low-power)")
         } else {
             Log.e(TAG, "❌ Accelerometer NOT FOUND")
         }
@@ -223,8 +230,12 @@ class SensorService : Service(), SensorEventListener {
                 // 단계 2~4: 상태 판단
                 evaluateState()
 
-                // 서버 전송 (경로 2)
-                sendToServer()
+                // 서버 전송 — 매번이 아닌 N번에 1번 (배터리 절약)
+                serverSendCounter++
+                if (serverSendCounter >= SERVER_SEND_EVERY_N) {
+                    serverSendCounter = 0
+                    sendToServer()
+                }
 
                 // UI 업데이트
                 broadcastStatus()
@@ -359,7 +370,7 @@ class SensorService : Service(), SensorEventListener {
 
             WorkerState.ACKNOWLEDGED -> {
                 // 확인 눌렀지만 계속 추적 감시
-                monitorIntervalMs = 2000L
+                monitorIntervalMs = WATCH_INTERVAL  // 10초
 
                 // 절대 상한 초과 또는 SpO₂ 심각 → 재알림
                 if (heartRate > 140 || (spo2 in 1..90)) {
@@ -393,7 +404,8 @@ class SensorService : Service(), SensorEventListener {
             }
 
             WorkerState.EMERGENCY -> {
-                // 🚨 단계 5: P2P BLE 경보 + 서버 알림
+                // 🚨 단계 5: P2P BLE 경보 + 서버 알림 (고출력 모드)
+                monitorIntervalMs = EMERGENCY_INTERVAL  // 1초 간격
                 Log.w(TAG, "🚨 EMERGENCY: HR=$heartRate, SpO2=$spo2, noMovement=${noMovementSeconds}s")
 
                 // P2P BLE 경보 발동
