@@ -31,9 +31,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SafePulse">
 
-        <!-- 메인 워치 화면 -->
+        <!-- 설정 화면 (첫 실행 / 착용자 변경) -->
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".ui.SetupActivity"
             android:exported="true"
             android:taskAffinity="">
             <intent-filter>
@@ -41,6 +41,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 메인 워치 화면 -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="false" />
 
         <!-- 알림 내역 화면 -->
         <activity

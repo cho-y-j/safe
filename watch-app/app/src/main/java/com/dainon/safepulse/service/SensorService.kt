@@ -54,18 +54,29 @@ class SensorService : Service(), SensorEventListener {
     private var spo2 = 0
     private var bodyTemp = 36.5
     private var accelX = 0f; private var accelY = 0f; private var accelZ = 0f
+    private var activityLevel = 0f  // 현재 활동량 (0=안정, 1+=활동)
 
-    // ──── 개인 베이스라인 (단계 1) ────
-    private val hrHistory = mutableListOf<Int>()          // 심박 이력
-    private val tempHistory = mutableListOf<Double>()      // 체온 이력
-    private val activityHistory = mutableListOf<Float>()   // 활동량 이력
-    private var baselineHrMean = 0.0     // 내 평균 심박
-    private var baselineHrStd = 0.0      // 내 심박 표준편차
+    // ──── 활동 상태별 베이스라인 (단계 1) ────
+    // 안정 시 (앉아있을 때)
+    private val restHrHistory = mutableListOf<Int>()
+    private var restHrMean = 72.0
+    private var restHrStd = 8.0
+    // 활동 시 (걸어다닐 때)
+    private val activeHrHistory = mutableListOf<Int>()
+    private var activeHrMean = 90.0
+    private var activeHrStd = 12.0
+    // 공통
     private var baselineTempMean = 36.5
-    private var baselineTempStd = 0.2
-    private var baselineReady = false    // 베이스라인 학습 완료 여부
-    private var learningMinutes = 0      // 학습 경과 시간(분)
-    private val BASELINE_MIN_MINUTES = 10 // 테스트: 10분, 실제 배포: 180분
+    private var baselineTempStd = 0.3
+    private var baselineReady = false
+    private var learningMinutes = 0
+    private var totalSamples = 0
+    private val BASELINE_MIN_SAMPLES = 60  // 최소 60개 (5초 간격 = 5분)
+
+    // 활동 판정 기준
+    private val ACTIVITY_THRESHOLD = 1.5f  // 가속도 변화량 이 이상이면 "활동 중"
+    private var recentActivitySum = 0f
+    private var recentActivityCount = 0
 
     // ──── 상태 관리 (단계 2~4) ────
     enum class WorkerState {
@@ -160,9 +171,15 @@ class SensorService : Service(), SensorEventListener {
                 accelY = event.values[1]
                 accelZ = event.values[2]
 
-                // 움직임 감지: 가속도 변화량
+                // 활동량 계산: 중력 제거 후 변화량
                 val magnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ)
-                if (abs(magnitude - 9.81f) > 1.5f) {
+                val deviation = abs(magnitude - 9.81f)
+
+                // 활동량 누적 (5초 평균용)
+                recentActivitySum += deviation
+                recentActivityCount++
+
+                if (deviation > ACTIVITY_THRESHOLD) {
                     lastMovementTime = System.currentTimeMillis()
                     noMovementSeconds = 0
                 }
@@ -191,9 +208,6 @@ class SensorService : Service(), SensorEventListener {
 
                 // 단계 1: 베이스라인 학습/업데이트
                 updateBaseline()
-                if (hrHistory.size % 20 == 0 && hrHistory.size > 0) {
-                    Log.d(TAG, "📊 Learning: samples=${hrHistory.size}, HR=$heartRate, baseline=$baselineReady, mean=${baselineHrMean.toInt()}")
-                }
 
                 // 단계 2~4: 상태 판단
                 evaluateState()
@@ -214,45 +228,58 @@ class SensorService : Service(), SensorEventListener {
     private fun updateBaseline() {
         if (heartRate <= 0) return
 
-        hrHistory.add(heartRate)
-        tempHistory.add(bodyTemp)
+        totalSamples++
 
-        val actMagnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ)
-        activityHistory.add(actMagnitude)
+        // 현재 활동량 계산 (최근 가속도 평균)
+        activityLevel = if (recentActivityCount > 0) recentActivitySum / recentActivityCount else 0f
+        recentActivitySum = 0f
+        recentActivityCount = 0
 
-        // 최근 데이터만 유지 (6시간 = 4320개 @5초 간격)
-        if (hrHistory.size > 4320) hrHistory.removeAt(0)
-        if (tempHistory.size > 4320) tempHistory.removeAt(0)
-        if (activityHistory.size > 4320) activityHistory.removeAt(0)
+        val isActive = activityLevel > ACTIVITY_THRESHOLD
+        val alpha = 0.05  // EMA 가중치 (천천히 업데이트)
 
-        learningMinutes = hrHistory.size * (monitorIntervalMs / 60000).toInt().coerceAtLeast(1)
+        // 활동 상태에 따라 다른 히스토리에 저장
+        if (isActive) {
+            activeHrHistory.add(heartRate)
+            if (activeHrHistory.size > 2000) activeHrHistory.removeAt(0)
+        } else {
+            restHrHistory.add(heartRate)
+            if (restHrHistory.size > 2000) restHrHistory.removeAt(0)
+        }
 
-        if (hrHistory.size >= (BASELINE_MIN_MINUTES * 60 / (monitorIntervalMs / 1000)).toInt()) {
-            // 평균 + 표준편차 계산 (EMA 방식으로 점진 업데이트)
-            val alpha = 0.1 // EMA 가중치
+        // 충분한 샘플이 모이면 베이스라인 갱신
+        val totalHistorySize = restHrHistory.size + activeHrHistory.size
+        if (totalHistorySize >= BASELINE_MIN_SAMPLES) {
 
-            val newMean = hrHistory.average()
-            val newStd = hrHistory.map { (it - newMean) * (it - newMean) }
-                .average().let { sqrt(it) }.coerceAtLeast(3.0)
-
-            if (baselineReady) {
-                // 점진적 업데이트 (매일 자동)
-                baselineHrMean = baselineHrMean * (1 - alpha) + newMean * alpha
-                baselineHrStd = baselineHrStd * (1 - alpha) + newStd * alpha
-                lastBaselineHR = baselineHrMean.toInt()
-            } else {
-                baselineHrMean = newMean
-                baselineHrStd = newStd
-                baselineReady = true
-                lastBaselineHR = baselineHrMean.toInt()
-                Log.d(TAG, "Baseline ready: HR mean=${baselineHrMean.toInt()}, std=${baselineHrStd.toInt()}")
+            // 안정 시 베이스라인
+            if (restHrHistory.size >= 20) {
+                val mean = restHrHistory.average()
+                val std = restHrHistory.map { (it - mean) * (it - mean) }.average().let { sqrt(it) }.coerceAtLeast(5.0)
+                restHrMean = restHrMean * (1 - alpha) + mean * alpha
+                restHrStd = restHrStd * (1 - alpha) + std * alpha
             }
 
-            val tMean = tempHistory.average()
-            val tStd = tempHistory.map { (it - tMean) * (it - tMean) }
-                .average().let { sqrt(it) }.coerceAtLeast(0.1)
-            baselineTempMean = baselineTempMean * (1 - alpha) + tMean * alpha
-            baselineTempStd = baselineTempStd * (1 - alpha) + tStd * alpha
+            // 활동 시 베이스라인
+            if (activeHrHistory.size >= 20) {
+                val mean = activeHrHistory.average()
+                val std = activeHrHistory.map { (it - mean) * (it - mean) }.average().let { sqrt(it) }.coerceAtLeast(8.0)
+                activeHrMean = activeHrMean * (1 - alpha) + mean * alpha
+                activeHrStd = activeHrStd * (1 - alpha) + std * alpha
+            }
+
+            if (!baselineReady) {
+                baselineReady = true
+                lastBaselineHR = restHrMean.toInt()
+                Log.d(TAG, "✅ Baseline ready: rest=${restHrMean.toInt()}±${restHrStd.toInt()}, active=${activeHrMean.toInt()}±${activeHrStd.toInt()}")
+            }
+            lastBaselineHR = restHrMean.toInt()
+        }
+
+        // 로그 (20샘플마다)
+        if (totalSamples % 20 == 0) {
+            Log.d(TAG, "📊 Learning: total=$totalSamples, rest=${restHrHistory.size}, active=${activeHrHistory.size}, " +
+                "restMean=${restHrMean.toInt()}, activeMean=${activeHrMean.toInt()}, " +
+                "curActivity=${String.format("%.1f", activityLevel)}, isActive=$isActive, HR=$heartRate")
         }
     }
 
@@ -263,18 +290,33 @@ class SensorService : Service(), SensorEventListener {
     private fun evaluateState() {
         if (!baselineReady || heartRate <= 0) return
 
-        val hrDeviation = (heartRate - baselineHrMean) / baselineHrStd  // 표준편차 몇 배?
+        // 현재 활동 상태에 맞는 기준 선택
+        val isActive = activityLevel > ACTIVITY_THRESHOLD
+        val expectedMean = if (isActive) activeHrMean else restHrMean
+        val expectedStd = if (isActive) activeHrStd else restHrStd
+        val hrDeviation = (heartRate - expectedMean) / expectedStd
+
         val now = System.currentTimeMillis()
 
         when (currentState) {
             WorkerState.NORMAL -> {
-                // 베이스라인 대비 2σ 이상 벗어나면 이상 감지
-                if (hrDeviation > 2.0 || hrDeviation < -2.0 || (spo2 in 1..93)) {
+                // 활동 상태별 기준 대비 2.5σ 이상 벗어나면 이상 감지
+                // (활동 중이면 활동 기준, 안정 시면 안정 기준)
+                val isHrAnomaly = hrDeviation > 2.5 || hrDeviation < -2.5
+                val isSpo2Anomaly = spo2 in 1..93
+                val isAbsoluteHigh = heartRate > 130  // 절대 상한 (어떤 상태든)
+
+                if (isAbsoluteHigh || isSpo2Anomaly || (isHrAnomaly && !isActive)) {
+                    // 안정 시 이상 또는 절대 상한 초과 또는 SpO₂ 저하
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
-                    monitorIntervalMs = ALERT_INTERVAL  // 모니터링 주기 강화
-                    Log.d(TAG, "Anomaly detected: HR deviation=${hrDeviation}, SpO2=$spo2")
+                    monitorIntervalMs = ALERT_INTERVAL
+                    Log.d(TAG, "⚠ Anomaly: HR=$heartRate (expected=${expectedMean.toInt()}±${expectedStd.toInt()}), " +
+                        "deviation=${"%.1f".format(hrDeviation)}σ, active=$isActive, SpO2=$spo2")
                     notifyWorker("컨디션 이상 감지. 휴식을 권고합니다.")
+                } else if (isHrAnomaly && isActive) {
+                    // 활동 중 심박 높음 — 바로 알림 아닌 경고만 (과로 주의)
+                    Log.d(TAG, "💡 Activity HR high but within active range: HR=$heartRate, deviation=${"%.1f".format(hrDeviation)}σ")
                 }
             }
 
@@ -299,19 +341,20 @@ class SensorService : Service(), SensorEventListener {
 
             WorkerState.ACKNOWLEDGED -> {
                 // 확인 눌렀지만 계속 추적 감시
-                monitorIntervalMs = 2000L  // 2초 간격 감시
+                monitorIntervalMs = 2000L
 
-                // 여전히 이상이면 다시 알림
-                if (hrDeviation > 3.0 || (spo2 in 1..90)) {
+                // 절대 상한 초과 또는 SpO₂ 심각 → 재알림
+                if (heartRate > 140 || (spo2 in 1..90)) {
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
                     notifyWorker("이상 징후가 지속됩니다. 즉시 휴식하세요.")
                 }
 
-                // 정상 복귀하면
-                if (hrDeviation < 1.5 && (spo2 == 0 || spo2 > 95)) {
+                // 정상 범위로 돌아오면 복귀
+                if (abs(hrDeviation) < 1.5 && (spo2 == 0 || spo2 > 95)) {
                     currentState = WorkerState.NORMAL
                     monitorIntervalMs = NORMAL_INTERVAL
+                    Log.d(TAG, "✅ Back to normal: HR=$heartRate")
                 }
             }
 
@@ -364,16 +407,16 @@ class SensorService : Service(), SensorEventListener {
 
     /** 잠 vs 응급 구분 (단계 4 핵심) */
     private fun isSleeping(): Boolean {
-        if (noMovementSeconds < SLEEP_VS_EMERGENCY_SEC) return false // 아직 판단 이름
+        if (noMovementSeconds < SLEEP_VS_EMERGENCY_SEC) return false
 
-        val hrNormal = heartRate > 0 &&
-            abs(heartRate - baselineHrMean) < baselineHrStd * 1.5  // 심박 정상 범위
+        // 안정 시 기준으로 정상 범위 체크 (움직임 없으니까)
+        val hrNormal = heartRate > 0 && abs(heartRate - restHrMean) < restHrStd * 2.0
         val tempNormal = abs(bodyTemp - baselineTempMean) < baselineTempStd * 2
         val spo2Normal = spo2 == 0 || spo2 > 94
 
-        // 바이탈 다 정상 + 무움직임 = 잠
-        // 바이탈 이상 + 무움직임 = 응급
-        return hrNormal && tempNormal && spo2Normal
+        val sleeping = hrNormal && tempNormal && spo2Normal
+        Log.d(TAG, "😴 Sleep check: noMove=${noMovementSeconds}s, hrNormal=$hrNormal(HR=$heartRate, restMean=${restHrMean.toInt()}), sleeping=$sleeping")
+        return sleeping
     }
 
     // ════════════════════════════════════════
@@ -481,23 +524,30 @@ class SensorService : Service(), SensorEventListener {
             putExtra("state", currentState.name)
             putExtra("stateKr", stateKr)
             putExtra("baselineReady", baselineReady)
-            putExtra("baselineHr", baselineHrMean.toInt())
+            putExtra("baselineHr", restHrMean.toInt())
+            putExtra("activeHr", activeHrMean.toInt())
+            putExtra("activityLevel", activityLevel)
+            putExtra("totalSamples", totalSamples)
             putExtra("noMovementSec", noMovementSeconds)
             putExtra("connected", true)
         })
 
         // 상태바 업데이트
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val isActive = activityLevel > ACTIVITY_THRESHOLD
         val statusText = if (baselineReady)
-            "$stateKr | 💓$heartRate (기준:${baselineHrMean.toInt()}) | $WORKER_ID"
+            "$stateKr | 💓$heartRate (${if (isActive) "활동${activeHrMean.toInt()}" else "안정${restHrMean.toInt()}"}) | $WORKER_ID"
         else
-            "베이스라인 학습 중... (${hrHistory.size}샘플) | $WORKER_ID"
+            "학습 중 (${totalSamples}샘플) | $WORKER_ID"
         nm.notify(NOTIFICATION_ID, buildStatusNotification(statusText))
     }
 
     private fun calculateStress(): Int {
         if (!baselineReady) return 20
-        val deviation = abs(heartRate - baselineHrMean) / baselineHrStd
+        val isActive = activityLevel > ACTIVITY_THRESHOLD
+        val expectedMean = if (isActive) activeHrMean else restHrMean
+        val expectedStd = if (isActive) activeHrStd else restHrStd
+        val deviation = abs(heartRate - expectedMean) / expectedStd
         return (deviation * 20).toInt().coerceIn(0, 100)
     }
 
