@@ -162,7 +162,7 @@ class SensorService : Service(), SensorEventListener {
                     heartRate = hr
                     hrLogCount++
                     if (hrLogCount % 10 == 1) { // 10번에 1번 로그
-                        Log.d(TAG, "💓 HR=$hr, samples=${hrHistory.size}, baselineReady=$baselineReady")
+                        Log.d(TAG, "💓 HR=$hr, samples=$totalSamples, baselineReady=$baselineReady")
                     }
                 }
             }

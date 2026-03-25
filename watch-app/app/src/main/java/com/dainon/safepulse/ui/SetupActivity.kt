@@ -36,7 +36,6 @@ class SetupActivity : AppCompatActivity() {
         val btnKeepData = findViewById<Button>(R.id.btnKeepData)
 
         // 이전 설정 불러오기
-        val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
         etWorkerId.setText(prefs.getString("workerId", "W-001"))
         etServerUrl.setText(prefs.getString("serverUrl", "http://192.168.0.10:4000"))
 
