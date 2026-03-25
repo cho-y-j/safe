@@ -108,6 +108,17 @@ class SensorService : Service(), SensorEventListener {
         createNotificationChannels()
         startForeground(NOTIFICATION_ID, buildStatusNotification("센서 초기화 중..."))
 
+        // 이전 베이스라인 복원
+        val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
+        WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
+        val savedHR = prefs.getInt("baselineHR", 0)
+        if (prefs.getBoolean("baselineComplete", false) && savedHR > 0) {
+            restHrMean = savedHR.toDouble()
+            baselineReady = true
+            lastBaselineHR = savedHR
+            Log.d(TAG, "📂 Baseline restored: restHR=$savedHR, worker=$WORKER_ID")
+        }
+
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         registerSensors()
         lastMovementTime = System.currentTimeMillis()
@@ -269,10 +280,17 @@ class SensorService : Service(), SensorEventListener {
 
             if (!baselineReady) {
                 baselineReady = true
-                lastBaselineHR = restHrMean.toInt()
                 Log.d(TAG, "✅ Baseline ready: rest=${restHrMean.toInt()}±${restHrStd.toInt()}, active=${activeHrMean.toInt()}±${activeHrStd.toInt()}")
             }
             lastBaselineHR = restHrMean.toInt()
+
+            // SharedPreferences에 저장 (앱 재시작 시 복원용)
+            try {
+                applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE).edit()
+                    .putInt("baselineHR", restHrMean.toInt())
+                    .putBoolean("baselineComplete", true)
+                    .apply()
+            } catch (_: Exception) {}
         }
 
         // 로그 (20샘플마다)
