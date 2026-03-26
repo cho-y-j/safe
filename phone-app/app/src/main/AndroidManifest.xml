@@ -35,12 +35,17 @@
         <!-- Wearable Data Layer (워치→폰 기존 BT 활용) -->
         <service
             android:name=".service.WearableListenerService"
-            android:exported="true">
+            android:exported="true"
+            android:permission="com.google.android.gms.permission.BIND_LISTENER">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/safepulse" />
             </intent-filter>
         </service>
+
+        <meta-data
+            android:name="com.google.android.gms.version"
+            android:value="@integer/google_play_services_version" />
 
         <!-- BLE 브릿지 (백업용) -->
         <service
