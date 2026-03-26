@@ -10,6 +10,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.dainon.safepulse.companion.R
 import com.dainon.safepulse.companion.service.BridgeService
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.*
@@ -121,7 +124,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestPermissions()
-        // 권한 승인 후 서비스 시작 (onRequestPermissionsResult에서)
+        // 워치 메시지 직접 수신 (MessageClient)
+        startWatchListener()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -153,6 +157,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ═══ Wearable MessageClient (워치 메시지 직접 수신) ═══
+
+    private val messageListener = MessageClient.OnMessageReceivedListener { event ->
+        val data = String(event.data, Charsets.UTF_8)
+        android.util.Log.d("WatchMsg", "📩 ${event.path}: $data")
+
+        when {
+            event.path.startsWith("/safepulse/status") -> {
+                try {
+                    val map = gson.fromJson(data, Map::class.java) as Map<String, Any>
+                    runOnUiThread {
+                        tvConnectionStatus.text = "● 워치 연결됨"
+                        tvConnectionStatus.setTextColor(0xFF43A047.toInt())
+                        tvWorkerId.text = map["workerId"]?.toString() ?: "--"
+                        val stateKr = map["stateKr"]?.toString() ?: "정상"
+                        tvWatchStatus.text = stateKr
+                        tvWatchStatus.setTextColor(
+                            if (stateKr.contains("응급") || stateKr.contains("위험")) 0xFFE53935.toInt()
+                            else if (stateKr.contains("이상") || stateKr.contains("낙상")) 0xFFFF9800.toInt()
+                            else 0xFF43A047.toInt()
+                        )
+                        val hr = (map["heartRate"] as? Number)?.toInt() ?: 0
+                        tvSignal.text = if (hr > 0) "💓$hr" else "--"
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("WatchMsg", "Parse error: ${e.message}")
+                }
+            }
+            event.path.startsWith("/safepulse/alert") -> {
+                runOnUiThread {
+                    btnAck.visibility = View.VISIBLE
+                    tvWatchStatus.text = "🚨 긴급"
+                    tvWatchStatus.setTextColor(0xFFE53935.toInt())
+                }
+            }
+        }
+    }
+
+    private fun startWatchListener() {
+        Wearable.getMessageClient(this).addListener(messageListener)
+        android.util.Log.d("WatchMsg", "✅ MessageClient listener registered")
+    }
+
     override fun onResume() {
         super.onResume()
         registerReceiver(watchReceiver, IntentFilter("com.dainon.safepulse.companion.WATCH_UPDATE"), RECEIVER_NOT_EXPORTED)
@@ -166,6 +213,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        try { Wearable.getMessageClient(this).removeListener(messageListener) } catch (_: Exception) {}
         scope.cancel()
         super.onDestroy()
     }
