@@ -165,6 +165,11 @@ class SensorService : Service(), SensorEventListener {
         val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
         WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
 
+        // 서버 URL 로드
+        val savedUrl = prefs.getString("serverUrl", "") ?: ""
+        if (savedUrl.isNotBlank()) ServerClient.updateUrl(savedUrl)
+        Log.d(TAG, "Server URL: ${ServerClient.baseUrl}, Worker: $WORKER_ID")
+
         // 작업 유형별 경보 범위 설정 (연구 기반)
         val workType = prefs.getString("workType", "light") ?: "light"
         alertRangeUpper = when (workType) {

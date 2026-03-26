@@ -16,7 +16,7 @@ android {
         versionName = "1.0"
 
         // SafePulse 서버 URL (배포 시 변경)
-        buildConfigField("String", "SERVER_URL", "\"http://10.0.2.2:4000\"")
+        buildConfigField("String", "SERVER_URL", "\"http://192.168.0.9:4000\"")
     }
 
     buildTypes {

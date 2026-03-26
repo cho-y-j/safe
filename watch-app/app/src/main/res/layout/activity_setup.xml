@@ -157,15 +157,15 @@
             android:backgroundTint="#2E75B6"
             android:layout_marginBottom="6dp" />
 
-        <!-- 기존 유지 버튼 -->
+        <!-- 설정 저장 -->
         <Button
             android:id="@+id/btnKeepData"
             android:layout_width="match_parent"
             android:layout_height="40dp"
-            android:text="기존 데이터 유지"
+            android:text="설정 저장"
             android:textSize="12sp"
-            android:textColor="#7A8FA3"
-            android:backgroundTint="#111D29"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#43A047"
             android:layout_marginBottom="6dp" />
 
         <!-- 안내 -->

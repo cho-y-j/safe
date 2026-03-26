@@ -17,7 +17,9 @@ object ServerClient {
 
     private val gson = Gson()
     private val JSON_TYPE = "application/json".toMediaType()
-    private val baseUrl = BuildConfig.SERVER_URL
+    var baseUrl = BuildConfig.SERVER_URL
+
+    fun updateUrl(url: String) { if (url.isNotBlank()) baseUrl = url }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
