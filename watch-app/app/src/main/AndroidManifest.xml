@@ -63,5 +63,14 @@
             android:name=".service.AlertService"
             android:exported="false" />
 
+        <!-- FCM 푸시 수신 -->
+        <service
+            android:name=".service.FCMService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>
