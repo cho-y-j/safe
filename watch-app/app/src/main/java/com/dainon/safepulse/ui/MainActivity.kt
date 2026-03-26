@@ -262,7 +262,15 @@ class MainActivity : AppCompatActivity() {
         startServices()
         startBle()
 
-        if (!isBaselineComplete) startLearningTimer()
+        // 프리셋이 있으면 학습 타이머 생략 (SensorService가 프리셋으로 시작)
+        val hasPreset = prefs.getFloat("presetRestMean", 0f) > 0
+        if (!isBaselineComplete && !hasPreset) {
+            startLearningTimer()
+        } else if (hasPreset && !isBaselineComplete) {
+            // 프리셋 있음 → 베이스라인 카드 바로 표시 + 백그라운드 학습
+            showBaselineComplete(prefs.getFloat("presetRestMean", 75f).toInt())
+            isBaselineComplete = true
+        }
     }
 
     private fun startRest() {
