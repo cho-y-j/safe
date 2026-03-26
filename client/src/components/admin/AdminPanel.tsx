@@ -63,15 +63,26 @@ export default function AdminPanel() {
 
   const handleSave = async () => {
     if (!editWorker) return;
-    if (editWorker.id && workers.find(w => w.id === editWorker.id)) {
-      await axios.put(`${API}/api/admin/workers/${editWorker.id}`, editWorker);
-    } else {
-      await axios.post(`${API}/api/admin/workers`, editWorker);
+    if (!editWorker.name || !editWorker.role || !editWorker.zone) {
+      alert('이름, 직무, 구역은 필수입니다');
+      return;
     }
-    setShowDialog(false);
-    setEditWorker(null);
-    fetchWorkers();
-    fetchStats();
+    // location 자동 설정
+    const data = { ...editWorker, location: editWorker.location || editWorker.zone };
+    try {
+      if (data.id && workers.find(w => w.id === data.id)) {
+        await axios.put(`${API}/api/admin/workers/${data.id}`, data);
+      } else {
+        await axios.post(`${API}/api/admin/workers`, data);
+      }
+      setShowDialog(false);
+      setEditWorker(null);
+      fetchWorkers();
+      fetchStats();
+    } catch (err: any) {
+      console.error('Save failed:', err);
+      alert(`저장 실패: ${err.response?.data?.error || err.message}`);
+    }
   };
 
   const handlePair = async () => {
