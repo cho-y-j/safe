@@ -60,6 +60,10 @@ router.post('/:id/sensor', async (req, res) => {
 
     const { heartRate, spo2, bodyTemp, stress, latitude, longitude } = req.body;
 
+    // 실제 워치 데이터 → 시뮬레이터에 반영 (대시보드에 표시)
+    const { realWatchData } = require('../services/simulator/wearable');
+    realWatchData[req.params.id] = { heartRate, spo2, bodyTemp, stress, latitude, longitude, timestamp: Date.now() };
+
     await SensorData.create({
       workerId: req.params.id,
       heartRate: heartRate || 0,
@@ -71,6 +75,7 @@ router.post('/:id/sensor', async (req, res) => {
       longitude: longitude || 126.4407,
     });
 
+    console.log(`[Watch] ${req.params.id}: HR=${heartRate}, SpO₂=${spo2}, temp=${bodyTemp}`);
     res.json({ success: true, workerId: req.params.id });
   } catch (err) {
     res.status(500).json({ error: 'Failed to save sensor data' });

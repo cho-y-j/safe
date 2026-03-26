@@ -156,6 +156,9 @@ function generateSensorData(workerId: string, zone: string): {
   return { heartRate, bodyTemp, spo2, stress, hrv, lat, lng, status, alerts };
 }
 
+// 실제 워치 데이터 저장소 (워치에서 POST /api/workers/:id/sensor로 전송한 데이터)
+export const realWatchData: Record<string, any> = {};
+
 export function startWearableSimulator(io: SocketServer) {
   // 5초 간격으로 전체 작업자 데이터 갱신 + 브로드캐스트
   setInterval(async () => {
@@ -164,6 +167,32 @@ export function startWearableSimulator(io: SocketServer) {
       const workerDataList = [];
 
       for (const worker of workers) {
+        // 실제 워치 연결된 작업자는 시뮬레이션 스킵
+        if (realWatchData[worker.id]) {
+          const real = realWatchData[worker.id];
+          workerDataList.push({
+            id: worker.id,
+            name: worker.name,
+            role: worker.role,
+            zone: worker.zone,
+            location: worker.location,
+            floor: worker.floor,
+            medicalHistory: worker.medicalHistory,
+            heartRate: real.heartRate || 0,
+            bodyTemp: real.bodyTemp || 36.5,
+            spo2: real.spo2 || 98,
+            stress: real.stress || 0,
+            hrv: real.hrv || 50,
+            lat: real.latitude || 37.4602,
+            lng: real.longitude || 126.4407,
+            status: real.heartRate > 130 ? 'danger' : real.heartRate > 100 ? 'caution' : 'normal',
+            alerts: [],
+            fatigue: real.stress || 0,
+            workMinutes: 0,
+          });
+          continue;
+        }
+
         const data = generateSensorData(worker.id, worker.zone);
 
         // DB 저장 (10회에 1번만 — 저장 빈도 조절)
