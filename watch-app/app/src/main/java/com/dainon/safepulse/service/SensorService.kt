@@ -853,6 +853,22 @@ class SensorService : Service(), SensorEventListener {
         else
             "학습 중 (${totalSamples}샘플) | $WORKER_ID"
         nm.notify(NOTIFICATION_ID, buildStatusNotification(statusText))
+
+        // 폰으로 전송 (기존 BT 연결 활용)
+        scope.launch {
+            try {
+                WearableCommService.sendStatus(this@SensorService, mapOf(
+                    "workerId" to WORKER_ID,
+                    "heartRate" to heartRate,
+                    "spo2" to (if (spo2 > 0) spo2 else 98),
+                    "state" to currentState.name,
+                    "stateKr" to stateKr,
+                    "baselineReady" to baselineReady,
+                    "restHrMean" to restHrMean.toInt(),
+                    "activeHrMean" to activeHrMean.toInt(),
+                ))
+            } catch (_: Exception) {}
+        }
     }
 
     private fun calculateStress(): Int {
