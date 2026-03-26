@@ -145,6 +145,17 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- 내 건강 리포트 버튼 -->
+    <Button
+        android:id="@+id/btnHealth"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="📊 내 건강 리포트"
+        android:textSize="14sp"
+        android:textColor="#2E75B6"
+        android:backgroundTint="#111D29"
+        android:layout_marginBottom="8dp" />
+
     <!-- 큰 확인 버튼 (이상 감지 시 사용) -->
     <Button
         android:id="@+id/btnAck"

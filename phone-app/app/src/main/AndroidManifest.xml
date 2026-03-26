@@ -28,6 +28,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.HealthReportActivity"
+            android:exported="false" />
+
         <service
             android:name=".service.BridgeService"
             android:exported="false"

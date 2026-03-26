@@ -109,6 +109,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 내 건강 리포트
+        findViewById<Button>(R.id.btnHealth).setOnClickListener {
+            startActivity(Intent(this, HealthReportActivity::class.java))
+        }
+
         // 설정 저장
         findViewById<Button>(R.id.btnSave).setOnClickListener {
             prefs.edit().putString("serverUrl", etServerUrl.text.toString()).apply()
