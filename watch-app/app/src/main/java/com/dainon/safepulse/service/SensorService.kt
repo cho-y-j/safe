@@ -114,6 +114,10 @@ class SensorService : Service(), SensorEventListener {
     private val SLEEP_VS_EMERGENCY_SEC = 30
     private val EMERGENCY_ESCALATION_SEC = 90
 
+    // ──── GPS 위치 ────
+    private var latitude = 37.4602
+    private var longitude = 126.4407
+
     // ──── 모니터링 주기 (특허: 이중 모드 전력 관리) ────
     private var monitorIntervalMs = 30000L   // 저전력 모드: 30초
     private val NORMAL_INTERVAL = 30000L     // 평상시 30초 (배터리 24~48시간)
@@ -143,6 +147,7 @@ class SensorService : Service(), SensorEventListener {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         registerSensors()
+        startGPS()
         lastMovementTime = System.currentTimeMillis()
         startMonitoringLoop()
     }
@@ -184,6 +189,36 @@ class SensorService : Service(), SensorEventListener {
 
         // 사용 가능한 전체 센서 목록 로그
         Log.d(TAG, "Available sensors: ${sensorManager.getSensorList(Sensor.TYPE_ALL).map { "${it.name}(${it.stringType})" }.joinToString(", ")}")
+    }
+
+    private fun startGPS() {
+        try {
+            val locationManager = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // 60초마다 GPS 업데이트 (저전력)
+                locationManager.requestLocationUpdates(
+                    android.location.LocationManager.GPS_PROVIDER,
+                    60000L, 10f, // 60초 또는 10m 이동
+                    object : android.location.LocationListener {
+                        override fun onLocationChanged(loc: android.location.Location) {
+                            latitude = loc.latitude
+                            longitude = loc.longitude
+                            Log.d(TAG, "📍 GPS: $latitude, $longitude")
+                        }
+                    }
+                )
+                // 마지막 알려진 위치
+                locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)?.let {
+                    latitude = it.latitude
+                    longitude = it.longitude
+                }
+                Log.d(TAG, "✅ GPS started")
+            } else {
+                Log.w(TAG, "⚠ GPS permission not granted")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "GPS error: ${e.message}")
+        }
     }
 
     private var hrLogCount = 0
@@ -637,7 +672,7 @@ class SensorService : Service(), SensorEventListener {
             spo2 = if (spo2 > 0) spo2 else 98,
             bodyTemp = bodyTemp,
             stress = calculateStress(),
-            latitude = 37.4602, longitude = 126.4407,
+            latitude = latitude, longitude = longitude,
         )
         ServerClient.sendSensorData(payload)
     }

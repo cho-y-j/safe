@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SafePulseCompanion" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#2E75B6</item>
+        <item name="colorPrimaryVariant">#1B5A94</item>
+        <item name="colorSecondary">#43A047</item>
+        <item name="android:windowBackground">#0A1118</item>
+        <item name="android:statusBarColor">#0A1118</item>
+        <item name="android:navigationBarColor">#0A1118</item>
+    </style>
+</resources>
