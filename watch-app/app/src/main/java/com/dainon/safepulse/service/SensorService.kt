@@ -74,29 +74,45 @@ class SensorService : Service(), SensorEventListener {
     private val BASELINE_MIN_SAMPLES = 60  // 최소 60개 (5초 간격 = 5분)
 
     // 활동 판정 기준
-    private val ACTIVITY_THRESHOLD = 1.5f  // 가속도 변화량 이 이상이면 "활동 중"
+    private val ACTIVITY_THRESHOLD = 1.5f
     private var recentActivitySum = 0f
     private var recentActivityCount = 0
+
+    // ──── 낙상 감지 ────
+    private var lastAccelMagnitude = 9.81f
+    private var freeFallDetected = false       // 자유낙하 감지
+    private var freeFallTime = 0L              // 자유낙하 시작 시각
+    private var impactDetected = false         // 충격 감지
+    private val FREE_FALL_THRESHOLD = 3.0f     // 이 이하면 자유낙하 (정상 9.81)
+    private val IMPACT_THRESHOLD = 25.0f       // 이 이상이면 충격
+    private val FALL_WINDOW_MS = 2000L         // 낙하→충격 2초 이내
+
+    // ──── 워치 탈착 감지 ────
+    private var lastValidHeartRate = 0         // 마지막 유효 심박
+    private var heartRateZeroCount = 0         // 연속 0 카운트
+    private var wasAnomalyBeforeZero = false   // 0 되기 전 이상 상태였나
 
     // ──── 상태 관리 (단계 2~4) ────
     enum class WorkerState {
         NORMAL,           // 정상
         MILD_ANOMALY,     // 경미한 이상 → 본인 알림
-        WAITING_ACK,      // 확인 버튼 대기 중
+        WAITING_ACK,      // 확인 버튼 대기 중 (5초)
         ACKNOWLEDGED,     // 확인 눌렀지만 추적 감시 중
         SLEEP_SUSPECTED,  // 수면 의심
+        WATCH_REMOVED,    // 워치 벗음 (정상 상태에서 심박 0)
+        FALL_DETECTED,    // 낙상 감지 → 5초 확인 대기
         EMERGENCY         // 응급 → P2P + 서버
     }
 
     private var currentState = WorkerState.NORMAL
-    private var anomalyStartTime = 0L      // 이상 시작 시각
-    private var ackWaitStartTime = 0L      // 확인 대기 시작 시각
-    private var lastMovementTime = 0L      // 마지막 움직임 시각
-    private var noMovementSeconds = 0      // 연속 무움직임 초
+    private var anomalyStartTime = 0L
+    private var ackWaitStartTime = 0L
+    private var lastMovementTime = 0L
+    private var noMovementSeconds = 0
 
-    private val ACK_TIMEOUT_SEC = 15       // 확인 버튼 대기 시간
-    private val SLEEP_VS_EMERGENCY_SEC = 30 // 잠/응급 판단 시간
-    private val EMERGENCY_ESCALATION_SEC = 90 // 119 연동 시간
+    private val ACK_TIMEOUT_SEC = 5        // P2P 전 확인 대기: 5초!
+    private val SLEEP_VS_EMERGENCY_SEC = 30
+    private val EMERGENCY_ESCALATION_SEC = 90
 
     // ──── 모니터링 주기 (특허: 이중 모드 전력 관리) ────
     private var monitorIntervalMs = 30000L   // 저전력 모드: 30초
@@ -177,10 +193,19 @@ class SensorService : Service(), SensorEventListener {
             Sensor.TYPE_HEART_RATE -> {
                 val hr = event.values[0].toInt()
                 if (hr > 0) {
+                    // 유효한 심박 → 정상 동작
+                    lastValidHeartRate = hr
+                    heartRateZeroCount = 0
                     heartRate = hr
                     hrLogCount++
-                    if (hrLogCount % 10 == 1) { // 10번에 1번 로그
+                    if (hrLogCount % 10 == 1) {
                         Log.d(TAG, "💓 HR=$hr, samples=$totalSamples, baselineReady=$baselineReady")
+                    }
+                } else {
+                    // 심박 0 → 워치 벗었거나 센서 접촉 불량
+                    heartRateZeroCount++
+                    if (heartRateZeroCount >= 3) { // 연속 3번 0이면
+                        handleHeartRateZero()
                     }
                 }
             }
@@ -189,11 +214,10 @@ class SensorService : Service(), SensorEventListener {
                 accelY = event.values[1]
                 accelZ = event.values[2]
 
-                // 활동량 계산: 중력 제거 후 변화량
                 val magnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ)
                 val deviation = abs(magnitude - 9.81f)
 
-                // 활동량 누적 (5초 평균용)
+                // 활동량 누적
                 recentActivitySum += deviation
                 recentActivityCount++
 
@@ -201,6 +225,41 @@ class SensorService : Service(), SensorEventListener {
                     lastMovementTime = System.currentTimeMillis()
                     noMovementSeconds = 0
                 }
+
+                // ──── 낙상 감지 (자유낙하 → 충격 패턴) ────
+                val now = System.currentTimeMillis()
+
+                // 1단계: 자유낙하 감지 (가속도 ≈ 0)
+                if (magnitude < FREE_FALL_THRESHOLD && !freeFallDetected) {
+                    freeFallDetected = true
+                    freeFallTime = now
+                    Log.w(TAG, "⚡ Free fall detected! magnitude=${"%.1f".format(magnitude)}")
+                }
+
+                // 2단계: 충격 감지 (자유낙하 후 2초 이내 큰 충격)
+                if (freeFallDetected && !impactDetected) {
+                    if (now - freeFallTime > FALL_WINDOW_MS) {
+                        // 2초 지나면 리셋 (낙상 아님)
+                        freeFallDetected = false
+                    } else if (magnitude > IMPACT_THRESHOLD) {
+                        impactDetected = true
+                        Log.w(TAG, "💥 FALL IMPACT! magnitude=${"%.1f".format(magnitude)}, time=${now - freeFallTime}ms")
+
+                        // 낙상 감지 → 5초 확인 대기
+                        if (currentState != WorkerState.EMERGENCY) {
+                            currentState = WorkerState.FALL_DETECTED
+                            ackWaitStartTime = now
+                            monitorIntervalMs = EMERGENCY_INTERVAL
+                            notifyWorker("⚠ 넘어지셨나요? 괜찮으시면 5초 내 확인을 눌러주세요!")
+                        }
+
+                        // 리셋
+                        freeFallDetected = false
+                        impactDetected = false
+                    }
+                }
+
+                lastAccelMagnitude = magnitude
             }
         }
         // SpO₂
@@ -211,6 +270,29 @@ class SensorService : Service(), SensorEventListener {
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    /** 심박 0 처리: 정상→0 = 벗은 것, 이상→0 = 진짜 위험 */
+    private fun handleHeartRateZero() {
+        val wasAnomaly = currentState == WorkerState.MILD_ANOMALY ||
+            currentState == WorkerState.WAITING_ACK ||
+            currentState == WorkerState.EMERGENCY ||
+            currentState == WorkerState.FALL_DETECTED
+
+        if (wasAnomaly) {
+            // 이상 상태에서 심박 0 → 진짜 위험! (의식 잃음 가능)
+            Log.w(TAG, "🚨 HR=0 during anomaly! Was: $currentState → EMERGENCY")
+            wasAnomalyBeforeZero = true
+            currentState = WorkerState.EMERGENCY
+            monitorIntervalMs = EMERGENCY_INTERVAL
+            notifyWorker("🚨 심박 감지 불가! 이상 상태에서 센서 이탈 — 긴급 경보 발동")
+        } else {
+            // 정상 상태에서 심박 0 → 워치 벗은 것
+            Log.d(TAG, "⌚ HR=0 from normal state → watch removed")
+            currentState = WorkerState.WATCH_REMOVED
+            monitorIntervalMs = NORMAL_INTERVAL  // 저전력 유지
+            heartRate = 0
+        }
+    }
 
     // ════════════════════════════════════════
     // 메인 모니터링 루프
@@ -359,12 +441,33 @@ class SensorService : Service(), SensorEventListener {
                 val waitSec = (now - ackWaitStartTime) / 1000
 
                 if (waitSec >= ACK_TIMEOUT_SEC) {
-                    // 확인 안 누름 → 잠 vs 응급 판단
+                    // 5초 내 확인 안 누름 → P2P 경보 + 서버 전송!
+                    Log.w(TAG, "⏰ No ACK in ${ACK_TIMEOUT_SEC}s → escalating!")
                     currentState = if (isSleeping()) {
                         WorkerState.SLEEP_SUSPECTED
                     } else {
                         WorkerState.EMERGENCY
                     }
+                }
+            }
+
+            WorkerState.FALL_DETECTED -> {
+                // 낙상 후 5초 확인 대기
+                val waitSec = (now - ackWaitStartTime) / 1000
+                if (waitSec >= ACK_TIMEOUT_SEC) {
+                    // 5초 내 확인 안 누름 → 즉시 응급!
+                    Log.w(TAG, "💥 Fall + no ACK → EMERGENCY!")
+                    currentState = WorkerState.EMERGENCY
+                }
+            }
+
+            WorkerState.WATCH_REMOVED -> {
+                // 워치 벗은 상태 — 다시 착용하면 복귀
+                if (heartRate > 0) {
+                    Log.d(TAG, "⌚ Watch back on! HR=$heartRate → NORMAL")
+                    currentState = WorkerState.NORMAL
+                    monitorIntervalMs = NORMAL_INTERVAL
+                    heartRateZeroCount = 0
                 }
             }
 
@@ -544,6 +647,8 @@ class SensorService : Service(), SensorEventListener {
             WorkerState.WAITING_ACK -> "확인 대기"
             WorkerState.ACKNOWLEDGED -> "추적 감시"
             WorkerState.SLEEP_SUSPECTED -> "수면 의심"
+            WorkerState.WATCH_REMOVED -> "미착용"
+            WorkerState.FALL_DETECTED -> "낙상 감지"
             WorkerState.EMERGENCY -> "응급"
         }
 
