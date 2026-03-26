@@ -39,6 +39,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBaselineHR: TextView
     private lateinit var tvBaselineUpdate: TextView
 
+    // 확인 오버레이
+    private lateinit var ackOverlay: LinearLayout
+    private lateinit var tvAckTitle: TextView
+    private lateinit var tvAckMessage: TextView
+    private lateinit var tvAckTimer: TextView
+    private lateinit var btnAckOk: Button
+    private lateinit var tvStateLabel: TextView
+
     private val sensorReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val hr = intent.getIntExtra("heartRate", 0)
@@ -52,8 +60,27 @@ class MainActivity : AppCompatActivity() {
             // 심박/SpO₂
             tvHeartRate.text = if (hr > 0) "$hr" else "--"
             tvSpO2.text = if (spo2 > 0) "$spo2%" else "--%"
-            tvConnection.text = if (connected) "● 서버 연결" else "○ 연결 대기"
+            tvConnection.text = if (connected) "●" else "○"
             tvConnection.setTextColor(if (connected) 0xFF66BB6A.toInt() else 0xFFFFB74D.toInt())
+
+            // 상태 표시
+            tvStateLabel.text = stateKr
+            val stateColor = when (intent.getStringExtra("state")) {
+                "EMERGENCY" -> 0xFFE53935.toInt()
+                "FALL_DETECTED", "MILD_ANOMALY", "WAITING_ACK" -> 0xFFFF9800.toInt()
+                "WATCH_REMOVED" -> 0xFF5A7A96.toInt()
+                "SLEEP_SUSPECTED" -> 0xFF42A5F5.toInt()
+                else -> 0xFF43A047.toInt()
+            }
+            tvStateLabel.setTextColor(stateColor)
+
+            // 확인 오버레이 표시 (WAITING_ACK 또는 FALL_DETECTED 시)
+            val state = intent.getStringExtra("state") ?: ""
+            if (state == "WAITING_ACK" || state == "FALL_DETECTED") {
+                showAckOverlay(state)
+            } else {
+                ackOverlay.visibility = View.GONE
+            }
 
             // 학습 상태 업데이트
             updateLearningUI(baselineReady, baselineHr, hr)
@@ -115,6 +142,22 @@ class MainActivity : AppCompatActivity() {
         pbLearning = findViewById(R.id.pbLearning)
         tvBaselineHR = findViewById(R.id.tvBaselineHR)
         tvBaselineUpdate = findViewById(R.id.tvBaselineUpdate)
+        tvStateLabel = findViewById(R.id.tvStateLabel)
+
+        // 확인 오버레이
+        ackOverlay = findViewById(R.id.ackOverlay)
+        tvAckTitle = findViewById(R.id.tvAckTitle)
+        tvAckMessage = findViewById(R.id.tvAckMessage)
+        tvAckTimer = findViewById(R.id.tvAckTimer)
+        btnAckOk = findViewById(R.id.btnAckOk)
+
+        // 확인 버튼 → 서비스에 ACK 전달 + 오버레이 닫기
+        btnAckOk.setOnClickListener {
+            ackOverlay.visibility = View.GONE
+            startService(Intent(this, SensorService::class.java).apply {
+                action = SensorService.ACTION_ACKNOWLEDGE
+            })
+        }
 
         findViewById<Button>(R.id.btnAlerts).setOnClickListener {
             startActivity(Intent(this, AlertListActivity::class.java))
@@ -209,6 +252,23 @@ class MainActivity : AppCompatActivity() {
             // 실시간 업데이트
             tvBaselineHR.text = "안정 시 평균: ${baselineHr}bpm (현재: ${currentHr})"
         }
+    }
+
+    private fun showAckOverlay(state: String) {
+        ackOverlay.visibility = View.VISIBLE
+        when (state) {
+            "FALL_DETECTED" -> {
+                tvAckTitle.text = "넘어지셨나요?"
+                tvAckMessage.text = "낙상이 감지되었습니다"
+                tvAckTitle.setTextColor(0xFFE53935.toInt())
+            }
+            else -> {
+                tvAckTitle.text = "괜찮으세요?"
+                tvAckMessage.text = "이상 징후가 감지되었습니다"
+                tvAckTitle.setTextColor(0xFFFF9800.toInt())
+            }
+        }
+        tvAckTimer.text = "5초 후 주변에 경보 발동"
     }
 
     // ═══ 권한 + 서비스 ═══

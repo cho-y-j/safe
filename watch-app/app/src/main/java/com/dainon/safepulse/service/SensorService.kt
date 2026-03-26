@@ -271,26 +271,28 @@ class SensorService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    /** 심박 0 처리: 정상→0 = 벗은 것, 이상→0 = 진짜 위험 */
+    /** 심박 0 처리: 항상 먼저 물어보기 (양치기 효과 방지) */
     private fun handleHeartRateZero() {
         val wasAnomaly = currentState == WorkerState.MILD_ANOMALY ||
             currentState == WorkerState.WAITING_ACK ||
-            currentState == WorkerState.EMERGENCY ||
             currentState == WorkerState.FALL_DETECTED
 
+        wasAnomalyBeforeZero = wasAnomaly
+
         if (wasAnomaly) {
-            // 이상 상태에서 심박 0 → 진짜 위험! (의식 잃음 가능)
-            Log.w(TAG, "🚨 HR=0 during anomaly! Was: $currentState → EMERGENCY")
-            wasAnomalyBeforeZero = true
-            currentState = WorkerState.EMERGENCY
+            // 이상 상태에서 심박 0 → 위험 가능성 높지만, 먼저 물어봄
+            Log.w(TAG, "⚠ HR=0 during anomaly ($currentState) → asking first")
+            currentState = WorkerState.WAITING_ACK
+            ackWaitStartTime = System.currentTimeMillis()
             monitorIntervalMs = EMERGENCY_INTERVAL
-            notifyWorker("🚨 심박 감지 불가! 이상 상태에서 센서 이탈 — 긴급 경보 발동")
+            notifyWorker("심박 감지가 안 됩니다. 괜찮으시면 확인을 눌러주세요!")
         } else {
-            // 정상 상태에서 심박 0 → 워치 벗은 것
-            Log.d(TAG, "⌚ HR=0 from normal state → watch removed")
+            // 정상에서 심박 0 → 벗었을 가능성 높지만, 그래도 물어봄
+            Log.d(TAG, "⌚ HR=0 from normal → likely removed, asking")
             currentState = WorkerState.WATCH_REMOVED
-            monitorIntervalMs = NORMAL_INTERVAL  // 저전력 유지
+            monitorIntervalMs = NORMAL_INTERVAL
             heartRate = 0
+            // 워치 벗은 건 조용히 처리 (진동 안 함)
         }
     }
 
