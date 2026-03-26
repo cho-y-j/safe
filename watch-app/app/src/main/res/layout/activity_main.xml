@@ -55,7 +55,7 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- ═══ 대기 상태: 작업 시작 ═══ -->
+            <!-- ═══ 대기 상태: 작업 시작 + 설정 ═══ -->
             <LinearLayout
                 android:id="@+id/idleView"
                 android:layout_width="match_parent"
@@ -80,7 +80,17 @@
                     android:text="▶ 작업 시작"
                     android:textSize="16sp"
                     android:textColor="#FFFFFF"
-                    android:backgroundTint="#2E75B6" />
+                    android:backgroundTint="#2E75B6"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btnSettings"
+                    android:layout_width="120dp"
+                    android:layout_height="32dp"
+                    android:text="⚙ 설정"
+                    android:textSize="11sp"
+                    android:textColor="#7A8FA3"
+                    android:backgroundTint="#111D29" />
             </LinearLayout>
 
             <!-- ═══ 작업 중 ═══ -->

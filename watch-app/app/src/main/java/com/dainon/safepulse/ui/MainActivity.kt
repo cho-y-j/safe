@@ -212,6 +212,9 @@ class MainActivity : AppCompatActivity() {
         btnWorkEnd.setOnClickListener { endWork() }
         btnRestEnd.setOnClickListener { endRest() }
         btnAlerts.setOnClickListener { startActivity(Intent(this, AlertListActivity::class.java)) }
+        findViewById<Button>(R.id.btnSettings).setOnClickListener {
+            startActivity(Intent(this, SetupActivity::class.java).putExtra("forceSetup", true))
+        }
         btnAckOk.setOnClickListener {
             ackOverlay.visibility = View.GONE
             startService(Intent(this, SensorService::class.java).apply { action = SensorService.ACTION_ACKNOWLEDGE })

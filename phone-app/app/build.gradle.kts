@@ -38,6 +38,9 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // Wearable Data Layer (워치↔폰 통신)
+    implementation("com.google.android.gms:play-services-wearable:18.1.0")
+
     // Firebase FCM
     implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
     implementation("com.google.firebase:firebase-messaging-ktx")
