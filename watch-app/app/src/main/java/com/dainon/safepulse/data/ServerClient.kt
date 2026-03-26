@@ -109,6 +109,38 @@ object ServerClient {
         }
     }
 
+    /** 베이스라인 서버 동기화 */
+    suspend fun syncBaseline(data: Map<String, Any>): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val json = gson.toJson(data)
+            val request = Request.Builder()
+                .url("$baseUrl/api/baseline/sync")
+                .post(json.toRequestBody(JSON_TYPE))
+                .build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 베이스라인 서버에서 복원 */
+    suspend fun restoreBaseline(workerId: String): Map<String, Any>? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/api/baseline/restore/$workerId")
+                .get()
+                .build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: return@withContext null
+                gson.fromJson(body, Map::class.java) as Map<String, Any>
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** 서버 헬스체크 */
     suspend fun healthCheck(): Boolean = withContext(Dispatchers.IO) {
         try {

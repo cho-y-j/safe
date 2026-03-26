@@ -78,6 +78,10 @@ class SensorService : Service(), SensorEventListener {
     private var recentActivitySum = 0f
     private var recentActivityCount = 0
 
+    // ──── 서버 동기화 + 시간대별 학습 ────
+    private var lastSyncTime = 0L
+    private val SYNC_INTERVAL_MS = 30 * 60 * 1000L  // 30분마다 서버 동기화
+
     // ──── 낙상 감지 ────
     private var lastAccelMagnitude = 9.81f
     private var freeFallDetected = false       // 자유낙하 감지
@@ -134,7 +138,7 @@ class SensorService : Service(), SensorEventListener {
         createNotificationChannels()
         startForeground(NOTIFICATION_ID, buildStatusNotification("센서 초기화 중..."))
 
-        // 이전 베이스라인 복원
+        // 이전 베이스라인 복원 (로컬 → 서버 순서)
         val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
         WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
         val savedHR = prefs.getInt("baselineHR", 0)
@@ -142,7 +146,30 @@ class SensorService : Service(), SensorEventListener {
             restHrMean = savedHR.toDouble()
             baselineReady = true
             lastBaselineHR = savedHR
-            Log.d(TAG, "📂 Baseline restored: restHR=$savedHR, worker=$WORKER_ID")
+            Log.d(TAG, "📂 Baseline restored from local: restHR=$savedHR")
+        }
+
+        // 서버에서 더 정확한 베이스라인 복원 시도 (비동기)
+        scope.launch {
+            try {
+                val serverBaseline = ServerClient.restoreBaseline(WORKER_ID)
+                if (serverBaseline != null && serverBaseline["found"] == true) {
+                    val serverRestHr = (serverBaseline["restHrMean"] as? Number)?.toDouble() ?: 0.0
+                    val serverActiveHr = (serverBaseline["activeHrMean"] as? Number)?.toDouble() ?: 0.0
+                    if (serverRestHr > 0) {
+                        restHrMean = serverRestHr
+                        activeHrMean = serverActiveHr
+                        restHrStd = (serverBaseline["restHrStd"] as? Number)?.toDouble() ?: 8.0
+                        activeHrStd = (serverBaseline["activeHrStd"] as? Number)?.toDouble() ?: 12.0
+                        baselineReady = true
+                        lastBaselineHR = serverRestHr.toInt()
+                        val days = (serverBaseline["totalDays"] as? Number)?.toInt() ?: 0
+                        Log.d(TAG, "☁ Baseline restored from server: ${days}일 학습, rest=${serverRestHr.toInt()}, active=${serverActiveHr.toInt()}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Server restore failed (using local): ${e.message}")
+            }
         }
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -358,6 +385,51 @@ class SensorService : Service(), SensorEventListener {
 
                 // UI 업데이트
                 broadcastStatus()
+
+                // 서버 베이스라인 동기화 (30분마다)
+                if (baselineReady && System.currentTimeMillis() - lastSyncTime > SYNC_INTERVAL_MS) {
+                    lastSyncTime = System.currentTimeMillis()
+                    syncBaselineToServer()
+                }
+            }
+        }
+    }
+
+    /** 베이스라인을 서버에 동기화 (시간대별) */
+    private fun syncBaselineToServer() {
+        scope.launch {
+            try {
+                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                val timeSlot = when {
+                    hour in 6..11 -> "morning"
+                    hour in 12..17 -> "afternoon"
+                    hour in 18..21 -> "evening"
+                    else -> "night"
+                }
+
+                val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                    .format(java.util.Date())
+
+                val data = mapOf(
+                    "workerId" to WORKER_ID,
+                    "date" to today,
+                    "timeSlot" to timeSlot,
+                    "restHrMean" to restHrMean,
+                    "restHrStd" to restHrStd,
+                    "restSamples" to restHrHistory.size,
+                    "activeHrMean" to activeHrMean,
+                    "activeHrStd" to activeHrStd,
+                    "activeSamples" to activeHrHistory.size,
+                    "workMinutes" to 0,
+                    "restMinutes" to 0,
+                )
+
+                val success = ServerClient.syncBaseline(data)
+                if (success) {
+                    Log.d(TAG, "☁ Baseline synced to server: $timeSlot, rest=${restHrMean.toInt()}, active=${activeHrMean.toInt()}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Sync error: ${e.message}")
             }
         }
     }
