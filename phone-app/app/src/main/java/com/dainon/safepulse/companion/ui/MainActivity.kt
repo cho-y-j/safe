@@ -116,13 +116,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestPermissions()
-        startService(Intent(this, BridgeService::class.java))
+        // 권한 승인 후 서비스 시작 (onRequestPermissionsResult에서)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 100) {
+            try { startForegroundService(Intent(this, BridgeService::class.java)) } catch (e: Exception) {
+                android.util.Log.e("Main", "Service start failed: ${e.message}")
+            }
+        }
     }
 
     private fun requestPermissions() {
         val perms = arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.POST_NOTIFICATIONS,
         )
@@ -131,6 +141,10 @@ class MainActivity : AppCompatActivity() {
         }
         if (needed.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toTypedArray(), 100)
+        } else {
+            try { startForegroundService(Intent(this, BridgeService::class.java)) } catch (e: Exception) {
+                android.util.Log.e("Main", "Service start failed: ${e.message}")
+            }
         }
     }
 
