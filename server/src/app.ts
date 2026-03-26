@@ -11,6 +11,7 @@ import { startSchedulers } from './services/scheduler';
 import { setupWebSocket } from './services/websocket';
 import { startWearableSimulator } from './services/simulator/wearable';
 import { initAED } from './services/aed';
+import { startAutoAlertEngine } from './services/autoAlert';
 import publicDataRoutes from './routes/publicData';
 import aedRoutes from './routes/aed';
 import adminRoutes from './routes/admin';
@@ -64,6 +65,9 @@ async function bootstrap() {
 
     startWearableSimulator(io);
     console.log('[Simulator] Wearable simulator started');
+
+    startAutoAlertEngine(io);
+    console.log('[AutoAlert] AI auto-alert engine started');
 
     server.listen(PORT, () => {
       console.log(`[SafePulse Server] Running on port ${PORT}`);
