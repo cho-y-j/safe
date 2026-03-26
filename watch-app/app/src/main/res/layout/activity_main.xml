@@ -4,7 +4,7 @@
     android:layout_height="match_parent"
     android:background="#0A1118">
 
-    <!-- ═══ 기본 화면 (스크롤) ═══ -->
+    <!-- ═══ 기본 화면 ═══ -->
     <ScrollView
         android:id="@+id/normalView"
         android:layout_width="match_parent"
@@ -17,348 +17,156 @@
             android:orientation="vertical"
             android:gravity="center_horizontal">
 
-            <!-- 최소 헤더: SP + 연결상태 한줄 -->
+            <!-- 상태 바: 연결 + 작업시간 + 상태 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:layout_marginBottom="4dp">
-
-                <TextView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:background="#2E75B6"
-                    android:text="SP"
-                    android:textSize="8sp"
-                    android:textColor="#FFFFFF"
-                    android:textStyle="bold"
-                    android:gravity="center" />
+                android:layout_marginBottom="2dp">
 
                 <TextView
                     android:id="@+id/tvConnection"
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text=" ○ 연결 대기"
-                    android:textSize="9sp"
+                    android:text="○"
+                    android:textSize="10sp"
                     android:textColor="#FFB74D" />
+
+                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
+                <TextView
+                    android:id="@+id/tvWorkTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textSize="10sp"
+                    android:textColor="#7A8FA3" />
+
+                <View android:layout_width="8dp" android:layout_height="0dp" />
 
                 <TextView
                     android:id="@+id/tvStateLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="정상"
-                    android:textSize="9sp"
-                    android:textColor="#43A047"
+                    android:text="대기"
+                    android:textSize="10sp"
+                    android:textColor="#7A8FA3"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- 학습 카드 -->
+            <!-- ═══ 대기 상태: 작업 시작 ═══ -->
             <LinearLayout
-                android:id="@+id/learningCard"
+                android:id="@+id/idleView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="#111D29"
-                android:padding="6dp"
-                android:layout_marginBottom="4dp"
+                android:gravity="center"
+                android:padding="8dp"
                 android:visibility="visible">
 
                 <TextView
-                    android:id="@+id/tvLearningTitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="베이스라인 학습 중..."
-                    android:textSize="11sp"
-                    android:textColor="#2E75B6"
-                    android:textStyle="bold"
-                    android:gravity="center" />
-
-                <ProgressBar
-                    android:id="@+id/pbLearning"
-                    style="@android:style/Widget.ProgressBar.Horizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="4dp"
-                    android:layout_marginTop="4dp"
-                    android:max="100"
-                    android:progress="0"
-                    android:progressTint="#2E75B6"
-                    android:progressBackgroundTint="#1E3044" />
-
-                <TextView
-                    android:id="@+id/tvLearningTime"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="남은 시간: 10분"
-                    android:textSize="12sp"
-                    android:textColor="#E0E6ED"
-                    android:textStyle="bold"
-                    android:gravity="center"
-                    android:layout_marginTop="2dp" />
-
-                <TextView
-                    android:id="@+id/tvLearningSamples"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="수집: 0개"
-                    android:textSize="9sp"
-                    android:textColor="#7A8FA3"
-                    android:gravity="center" />
-
-                <TextView
-                    android:id="@+id/tvLearningNote"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="기본 데이터로 작동 중"
-                    android:textSize="8sp"
-                    android:textColor="#5A7A96"
-                    android:gravity="center" />
-            </LinearLayout>
-
-            <!-- 베이스라인 완료 카드 -->
-            <LinearLayout
-                android:id="@+id/baselineCard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="#111D29"
-                android:padding="4dp"
-                android:layout_marginBottom="4dp"
-                android:visibility="gone">
-
-                <TextView
-                    android:id="@+id/tvBaselineHR"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="안정 평균: --bpm"
-                    android:textSize="10sp"
-                    android:textColor="#43A047"
-                    android:gravity="center" />
-
-                <TextView
-                    android:id="@+id/tvBaselineUpdate"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="자동 업데이트 중"
-                    android:textSize="8sp"
-                    android:textColor="#5A7A96"
-                    android:gravity="center" />
-            </LinearLayout>
-
-            <!-- 심박 + SpO₂ -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="#111D29"
-                    android:padding="6dp"
-                    android:layout_marginEnd="2dp">
-
-                    <TextView
-                        android:id="@+id/tvHeartRate"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textSize="28sp"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="💓 bpm"
-                        android:textSize="9sp"
-                        android:textColor="#7A8FA3" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="#111D29"
-                    android:padding="6dp"
-                    android:layout_marginStart="2dp">
-
-                    <TextView
-                        android:id="@+id/tvSpO2"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--%"
-                        android:textSize="28sp"
-                        android:textColor="#FFFFFF"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="🫁 SpO₂"
-                        android:textSize="9sp"
-                        android:textColor="#7A8FA3" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- AI 상태 -->
-            <TextView
-                android:id="@+id/tvStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="AI 분석 대기"
-                android:textSize="10sp"
-                android:textColor="#B0BEC5"
-                android:gravity="center"
-                android:background="#111D29"
-                android:padding="4dp"
-                android:layout_marginTop="4dp" />
-
-            <!-- AI 위험도 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="#111D29"
-                android:padding="4dp"
-                android:gravity="center_vertical"
-                android:layout_marginTop="2dp">
-
-                <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="AI 위험도: "
-                    android:textSize="9sp"
-                    android:textColor="#7A8FA3" />
-
-                <TextView
-                    android:id="@+id/tvRiskLevel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="안전"
+                    android:text="준비 완료"
                     android:textSize="14sp"
-                    android:textColor="#66BB6A"
-                    android:textStyle="bold" />
+                    android:textColor="#7A8FA3"
+                    android:layout_marginBottom="8dp" />
 
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="0dp"
-                    android:layout_weight="1" />
-
-                <TextView
-                    android:id="@+id/tvRecommendation"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textSize="8sp"
-                    android:textColor="#5A7A96"
-                    android:maxWidth="120dp"
-                    android:ellipsize="end"
-                    android:maxLines="1" />
+                <Button
+                    android:id="@+id/btnWorkStart"
+                    android:layout_width="160dp"
+                    android:layout_height="52dp"
+                    android:text="▶ 작업 시작"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#2E75B6" />
             </LinearLayout>
 
-            <!-- 관제센터 메시지 -->
+            <!-- ═══ 작업 중 ═══ -->
             <LinearLayout
-                android:id="@+id/alertBanner"
+                android:id="@+id/workingView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="#1E3044"
-                android:padding="4dp"
-                android:layout_marginTop="4dp"
                 android:visibility="gone">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="📋 관제센터"
-                    android:textSize="8sp"
-                    android:textColor="#2E75B6" />
-
-                <TextView
-                    android:id="@+id/tvLastAlert"
+                <!-- 학습 카드 -->
+                <LinearLayout
+                    android:id="@+id/learningCard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text=""
-                    android:textSize="10sp"
-                    android:textColor="#E0E6ED"
-                    android:maxLines="2" />
+                    android:orientation="vertical"
+                    android:background="#111D29"
+                    android:padding="4dp"
+                    android:layout_marginBottom="3dp"
+                    android:visibility="gone">
+                    <TextView android:id="@+id/tvLearningTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="학습 중..." android:textSize="10sp" android:textColor="#2E75B6" android:gravity="center" />
+                    <ProgressBar android:id="@+id/pbLearning" style="@android:style/Widget.ProgressBar.Horizontal" android:layout_width="match_parent" android:layout_height="3dp" android:max="100" android:progressTint="#2E75B6" android:progressBackgroundTint="#1E3044" />
+                    <TextView android:id="@+id/tvLearningTime" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="9sp" android:textColor="#7A8FA3" android:gravity="center" />
+                    <TextView android:id="@+id/tvLearningSamples" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="8sp" android:textColor="#5A7A96" android:gravity="center" />
+                    <TextView android:id="@+id/tvLearningNote" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="8sp" android:textColor="#5A7A96" android:gravity="center" />
+                </LinearLayout>
+
+                <!-- 베이스라인 완료 -->
+                <LinearLayout android:id="@+id/baselineCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="#111D29" android:padding="3dp" android:layout_marginBottom="3dp" android:visibility="gone">
+                    <TextView android:id="@+id/tvBaselineHR" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="9sp" android:textColor="#43A047" android:gravity="center" />
+                    <TextView android:id="@+id/tvBaselineUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="8sp" android:textColor="#5A7A96" android:gravity="center" />
+                </LinearLayout>
+
+                <!-- 심박 + SpO₂ -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center">
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="6dp" android:layout_marginEnd="2dp">
+                        <TextView android:id="@+id/tvHeartRate" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="28sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="💓 bpm" android:textSize="9sp" android:textColor="#7A8FA3" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="6dp" android:layout_marginStart="2dp">
+                        <TextView android:id="@+id/tvSpO2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--%"  android:textSize="28sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🫁 SpO₂" android:textSize="9sp" android:textColor="#7A8FA3" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- AI 상태 -->
+                <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="#B0BEC5" android:gravity="center" android:background="#111D29" android:padding="3dp" android:layout_marginTop="3dp" />
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:background="#111D29" android:padding="3dp" android:gravity="center_vertical" android:layout_marginTop="2dp">
+                    <TextView android:id="@+id/tvRiskLevel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="안전" android:textSize="14sp" android:textColor="#66BB6A" android:textStyle="bold" />
+                    <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+                    <TextView android:id="@+id/tvRecommendation" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="8sp" android:textColor="#5A7A96" android:maxWidth="120dp" android:ellipsize="end" android:maxLines="1" />
+                </LinearLayout>
+
+                <!-- 관제 메시지 -->
+                <LinearLayout android:id="@+id/alertBanner" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="#1E3044" android:padding="4dp" android:layout_marginTop="3dp" android:visibility="gone">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="📋 관제센터" android:textSize="8sp" android:textColor="#2E75B6" />
+                    <TextView android:id="@+id/tvLastAlert" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="10sp" android:textColor="#E0E6ED" android:maxLines="2" />
+                </LinearLayout>
+
+                <!-- 휴식 / 종료 버튼 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center" android:layout_marginTop="4dp">
+                    <Button android:id="@+id/btnRest" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="🔋 휴식" android:textSize="11sp" android:textColor="#FFFFFF" android:backgroundTint="#43A047" android:layout_marginEnd="2dp" />
+                    <Button android:id="@+id/btnWorkEnd" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="⏹ 종료" android:textSize="11sp" android:textColor="#7A8FA3" android:backgroundTint="#111D29" android:layout_marginStart="2dp" />
+                </LinearLayout>
+
+                <Button android:id="@+id/btnAlerts" android:layout_width="match_parent" android:layout_height="28dp" android:text="📋 알림" android:textSize="9sp" android:textColor="#5A7A96" android:backgroundTint="#0A1118" android:layout_marginTop="2dp" />
             </LinearLayout>
 
-            <!-- 알림 내역 버튼 -->
-            <Button
-                android:id="@+id/btnAlerts"
-                android:layout_width="match_parent"
-                android:layout_height="32dp"
-                android:text="📋 알림 내역"
-                android:textSize="10sp"
-                android:textColor="#7A8FA3"
-                android:backgroundTint="#111D29"
-                android:layout_marginTop="4dp" />
+            <!-- ═══ 휴식 중 ═══ -->
+            <LinearLayout android:id="@+id/restingView" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="center" android:padding="12dp" android:visibility="gone">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🔋 휴식 중" android:textSize="18sp" android:textColor="#43A047" android:textStyle="bold" />
+                <TextView android:id="@+id/tvRestTime" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0:00" android:textSize="32sp" android:textColor="#E0E6ED" android:textStyle="bold" android:layout_marginTop="8dp" />
+                <TextView android:id="@+id/tvRestTarget" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="목표: 30분" android:textSize="11sp" android:textColor="#7A8FA3" android:layout_marginTop="4dp" />
+                <Button android:id="@+id/btnRestEnd" android:layout_width="160dp" android:layout_height="48dp" android:text="▶ 작업 복귀" android:textSize="14sp" android:textColor="#FFFFFF" android:backgroundTint="#2E75B6" android:layout_marginTop="12dp" />
+            </LinearLayout>
 
         </LinearLayout>
     </ScrollView>
 
-    <!-- ═══ 확인 요청 오버레이 (이상 감지 시 화면 중앙에 크게) ═══ -->
-    <LinearLayout
-        android:id="@+id/ackOverlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:background="#CC0A1118"
-        android:padding="16dp"
-        android:visibility="gone"
-        android:clickable="true">
-
-        <TextView
-            android:id="@+id/tvAckTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="괜찮으세요?"
-            android:textSize="18sp"
-            android:textColor="#FFB74D"
-            android:textStyle="bold"
-            android:gravity="center" />
-
-        <TextView
-            android:id="@+id/tvAckMessage"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="이상 징후가 감지되었습니다"
-            android:textSize="11sp"
-            android:textColor="#B0BEC5"
-            android:gravity="center"
-            android:layout_marginTop="8dp" />
-
-        <TextView
-            android:id="@+id/tvAckTimer"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="5초 후 경보 발동"
-            android:textSize="10sp"
-            android:textColor="#EF5350"
-            android:gravity="center"
-            android:layout_marginTop="4dp" />
-
-        <!-- 큰 확인 버튼 -->
-        <Button
-            android:id="@+id/btnAckOk"
-            android:layout_width="160dp"
-            android:layout_height="56dp"
-            android:text="✅ 괜찮아요"
-            android:textSize="16sp"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#43A047"
-            android:layout_marginTop="16dp" />
-
+    <!-- ═══ 확인 요청 오버레이 ═══ -->
+    <LinearLayout android:id="@+id/ackOverlay" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:background="#CC0A1118" android:padding="16dp" android:visibility="gone" android:clickable="true">
+        <TextView android:id="@+id/tvAckTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="괜찮으세요?" android:textSize="18sp" android:textColor="#FFB74D" android:textStyle="bold" android:gravity="center" />
+        <TextView android:id="@+id/tvAckMessage" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="이상 징후 감지" android:textSize="11sp" android:textColor="#B0BEC5" android:gravity="center" android:layout_marginTop="8dp" />
+        <TextView android:id="@+id/tvAckTimer" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="5초 후 경보" android:textSize="10sp" android:textColor="#EF5350" android:gravity="center" android:layout_marginTop="4dp" />
+        <Button android:id="@+id/btnAckOk" android:layout_width="160dp" android:layout_height="56dp" android:text="✅ 괜찮아요" android:textSize="16sp" android:textColor="#FFFFFF" android:backgroundTint="#43A047" android:layout_marginTop="16dp" />
     </LinearLayout>
 
 </FrameLayout>
