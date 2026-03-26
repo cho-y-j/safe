@@ -56,22 +56,25 @@ class SensorService : Service(), SensorEventListener {
     private var accelX = 0f; private var accelY = 0f; private var accelZ = 0f
     private var activityLevel = 0f  // 현재 활동량 (0=안정, 1+=활동)
 
-    // ──── 활동 상태별 베이스라인 (단계 1) ────
-    // 안정 시 (앉아있을 때)
+    // ──── 베이스라인 + 연구 기반 경보 범위 ────
     private val restHrHistory = mutableListOf<Int>()
-    private var restHrMean = 72.0
+    private var restHrMean = 72.0       // 안정 시 평균 (학습으로 업데이트)
     private var restHrStd = 8.0
-    // 활동 시 (걸어다닐 때)
     private val activeHrHistory = mutableListOf<Int>()
-    private var activeHrMean = 90.0
+    private var activeHrMean = 90.0     // 활동 시 평균
     private var activeHrStd = 12.0
-    // 공통
     private var baselineTempMean = 36.5
     private var baselineTempStd = 0.3
     private var baselineReady = false
-    private var learningMinutes = 0
     private var totalSamples = 0
-    private val BASELINE_MIN_SAMPLES = 60  // 최소 60개 (5초 간격 = 5분)
+    private val BASELINE_MIN_SAMPLES = 24  // 최소 24개 (30초 간격 = 2분이면 충분)
+
+    // 직업별 경보 범위 (연구 기반: NIOSH HRR%, PMC 건설 노동자 실측)
+    // "괜찮아요" 피드백으로 개인화됨
+    private var alertRangeUpper = 55     // 안정 + 이 값 초과 시 경보 (기본: 경량작업)
+    private var alertRangeLower = 30     // 안정 - 이 값 미만 시 경보
+    private val ABSOLUTE_MAX_HR = 180    // 절대 상한 (직업 무관)
+    private val ABSOLUTE_MIN_HR = 40     // 절대 하한 (서맥)
 
     // 활동 판정 기준
     private val ACTIVITY_THRESHOLD = 1.5f
@@ -142,15 +145,21 @@ class SensorService : Service(), SensorEventListener {
         val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
         WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
 
-        // 작업 유형 프리셋 적용 (초기값)
+        // 작업 유형별 경보 범위 설정 (연구 기반)
+        val workType = prefs.getString("workType", "light") ?: "light"
+        alertRangeUpper = when (workType) {
+            "office"  -> 40   // 사무직: 안정+40 (HRR 20~39%)
+            "light"   -> 55   // 경량: 안정+55 (HRR 33~50%)
+            "heavy"   -> 65   // 중량: 안정+65 (HRR 40~60%)
+            "outdoor" -> 80   // 야외: 안정+80 (HRR 50~70%)
+            else -> 55
+        }
+
+        // 프리셋 초기값
         val presetRestMean = prefs.getFloat("presetRestMean", 75f).toDouble()
-        val presetRestStd = prefs.getFloat("presetRestStd", 12f).toDouble()
         val presetActiveMean = prefs.getFloat("presetActiveMean", 95f).toDouble()
-        val presetActiveStd = prefs.getFloat("presetActiveStd", 15f).toDouble()
         restHrMean = presetRestMean
-        restHrStd = presetRestStd
         activeHrMean = presetActiveMean
-        activeHrStd = presetActiveStd
 
         // 로컬 저장값이 있으면 덮어쓰기
         val savedHR = prefs.getInt("baselineHR", 0)
@@ -558,39 +567,52 @@ class SensorService : Service(), SensorEventListener {
     private fun evaluateState() {
         if (!baselineReady || heartRate <= 0) return
 
-        // 현재 활동 상태에 맞는 기준 선택
-        val isActive = activityLevel > ACTIVITY_THRESHOLD
-        val expectedMean = if (isActive) activeHrMean else restHrMean
-        val expectedStd = if (isActive) activeHrStd else restHrStd
-        val hrDeviation = (heartRate - expectedMean) / expectedStd
-
         val now = System.currentTimeMillis()
 
         when (currentState) {
             WorkerState.NORMAL -> {
-                // 적응형 민감도: 샘플 많을수록 정밀, 적으면 관대
-                val sigmaThreshold = when {
-                    totalSamples < 60 -> 4.0    // 첫 5분: 매우 관대 (프리셋 기준)
-                    totalSamples < 300 -> 3.5   // 첫 30분: 관대
-                    totalSamples < 1000 -> 3.0  // 1시간+: 보통
-                    else -> 2.5                  // 충분히 학습: 정밀
-                }
-                val isHrAnomaly = hrDeviation > sigmaThreshold || hrDeviation < -sigmaThreshold
-                val isSpo2Anomaly = spo2 in 1..93
-                val absoluteMax = if (isActive) 150 else 130  // 활동 시 상한 높임
-                val isAbsoluteHigh = heartRate > absoluteMax
+                // 연구 기반 ± 범위 경보 (NIOSH HRR%, PMC 실측)
+                val upperLimit = restHrMean + alertRangeUpper  // 상한
+                val lowerLimit = restHrMean - alertRangeLower  // 하한
 
-                if (isAbsoluteHigh || isSpo2Anomaly || (isHrAnomaly && !isActive)) {
-                    // 안정 시 이상 또는 절대 상한 초과 또는 SpO₂ 저하
+                // 학습 초기 여유 (+20%)
+                val margin = if (totalSamples < 60) 1.2 else 1.0
+                val adjustedUpper = (upperLimit * margin).toInt()
+
+                val isTooHigh = heartRate > adjustedUpper
+                val isTooLow = heartRate > 0 && heartRate < lowerLimit.toInt()
+                val isAbsoluteHigh = heartRate >= ABSOLUTE_MAX_HR
+                val isAbsoluteLow = heartRate in 1 until ABSOLUTE_MIN_HR
+                val isSpo2Low = spo2 in 1..93
+
+                // 급격한 하락 감지 (이전 대비 20bpm 이상 급락)
+                val isSuddenDrop = lastValidHeartRate > 0 && heartRate > 0 &&
+                    (lastValidHeartRate - heartRate) > 20
+
+                if (isAbsoluteHigh || isAbsoluteLow || isSpo2Low) {
+                    // 절대 상한/하한 → 즉시 경보
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
                     monitorIntervalMs = ALERT_INTERVAL
-                    Log.d(TAG, "⚠ Anomaly: HR=$heartRate (expected=${expectedMean.toInt()}±${expectedStd.toInt()}), " +
-                        "deviation=${"%.1f".format(hrDeviation)}σ, active=$isActive, SpO2=$spo2")
-                    notifyWorker("컨디션 이상 감지. 휴식을 권고합니다.")
-                } else if (isHrAnomaly && isActive) {
-                    // 활동 중 심박 높음 — 바로 알림 아닌 경고만 (과로 주의)
-                    Log.d(TAG, "💡 Activity HR high but within active range: HR=$heartRate, deviation=${"%.1f".format(hrDeviation)}σ")
+                    val reason = when {
+                        isAbsoluteHigh -> "심박 ${heartRate}bpm — 절대 상한 초과"
+                        isAbsoluteLow -> "심박 ${heartRate}bpm — 서맥 위험"
+                        else -> "SpO₂ ${spo2}% — 산소포화도 저하"
+                    }
+                    Log.w(TAG, "🚨 $reason")
+                    notifyWorker(reason)
+                } else if (isTooHigh || isTooLow || isSuddenDrop) {
+                    // 개인 범위 이탈
+                    currentState = WorkerState.MILD_ANOMALY
+                    anomalyStartTime = now
+                    monitorIntervalMs = ALERT_INTERVAL
+                    val reason = when {
+                        isTooHigh -> "심박 ${heartRate}bpm (기준 ${adjustedUpper} 초과)"
+                        isTooLow -> "심박 ${heartRate}bpm (기준 ${lowerLimit.toInt()} 미만)"
+                        else -> "심박 급락 (${lastValidHeartRate}→${heartRate})"
+                    }
+                    Log.d(TAG, "⚠ $reason, 안정평균=${restHrMean.toInt()}, 범위=+$alertRangeUpper/-$alertRangeLower")
+                    notifyWorker("컨디션 이상 감지. $reason")
                 }
             }
 
@@ -635,18 +657,20 @@ class SensorService : Service(), SensorEventListener {
             }
 
             WorkerState.ACKNOWLEDGED -> {
-                // 확인 눌렀지만 계속 추적 감시
-                monitorIntervalMs = WATCH_INTERVAL  // 10초
+                // 확인 눌렀지만 추적 감시
+                monitorIntervalMs = WATCH_INTERVAL
 
-                // 절대 상한 초과 또는 SpO₂ 심각 → 재알림
-                if (heartRate > 140 || (spo2 in 1..90)) {
+                // 절대 상한 또는 SpO₂ 심각 → 재알림
+                if (heartRate >= ABSOLUTE_MAX_HR || heartRate in 1 until ABSOLUTE_MIN_HR || (spo2 in 1..90)) {
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
                     notifyWorker("이상 징후가 지속됩니다. 즉시 휴식하세요.")
                 }
 
-                // 정상 범위로 돌아오면 복귀
-                if (abs(hrDeviation) < 1.5 && (spo2 == 0 || spo2 > 95)) {
+                // 정상 범위 복귀
+                val upperOk = heartRate < (restHrMean + alertRangeUpper * 0.7).toInt()
+                val lowerOk = heartRate > (restHrMean - alertRangeLower * 0.7).toInt()
+                if (heartRate > 0 && upperOk && lowerOk && (spo2 == 0 || spo2 > 95)) {
                     currentState = WorkerState.NORMAL
                     monitorIntervalMs = NORMAL_INTERVAL
                     Log.d(TAG, "✅ Back to normal: HR=$heartRate")
@@ -658,7 +682,7 @@ class SensorService : Service(), SensorEventListener {
                 notifyWorker("움직임이 없습니다. 괜찮으신가요?")
 
                 // 바이탈이 악화되면 응급 전환
-                if (hrDeviation > 3.0 || hrDeviation < -3.0 || (spo2 in 1..90)) {
+                if (heartRate >= ABSOLUTE_MAX_HR || heartRate in 1 until ABSOLUTE_MIN_HR || (spo2 in 1..90)) {
                     currentState = WorkerState.EMERGENCY
                 }
 
@@ -873,11 +897,9 @@ class SensorService : Service(), SensorEventListener {
 
     private fun calculateStress(): Int {
         if (!baselineReady) return 20
-        val isActive = activityLevel > ACTIVITY_THRESHOLD
-        val expectedMean = if (isActive) activeHrMean else restHrMean
-        val expectedStd = if (isActive) activeHrStd else restHrStd
-        val deviation = abs(heartRate - expectedMean) / expectedStd
-        return (deviation * 20).toInt().coerceIn(0, 100)
+        // 안정 평균 대비 얼마나 벗어났는지 = 스트레스
+        val diff = abs(heartRate - restHrMean)
+        return ((diff / alertRangeUpper) * 100).toInt().coerceIn(0, 100)
     }
 
     // ════════════════════════════════════════
