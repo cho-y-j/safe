@@ -52,7 +52,8 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 
     // Health Services (심박수, SpO₂)
-    implementation("androidx.health:health-services-client:1.0.0-rc02")
+    implementation("androidx.health:health-services-client:1.1.0-alpha03")
+    implementation("com.google.guava:guava:32.1.3-android")
 
     // Samsung Health SDK (Galaxy Watch 전용)
     // implementation(files("libs/samsung-health-sdk.aar"))

@@ -138,15 +138,32 @@ class SensorService : Service(), SensorEventListener {
         createNotificationChannels()
         startForeground(NOTIFICATION_ID, buildStatusNotification("센서 초기화 중..."))
 
-        // 이전 베이스라인 복원 (로컬 → 서버 순서)
+        // 이전 베이스라인 복원 (프리셋 → 로컬 → 서버 순서)
         val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
         WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
+
+        // 작업 유형 프리셋 적용 (초기값)
+        val presetRestMean = prefs.getFloat("presetRestMean", 75f).toDouble()
+        val presetRestStd = prefs.getFloat("presetRestStd", 12f).toDouble()
+        val presetActiveMean = prefs.getFloat("presetActiveMean", 95f).toDouble()
+        val presetActiveStd = prefs.getFloat("presetActiveStd", 15f).toDouble()
+        restHrMean = presetRestMean
+        restHrStd = presetRestStd
+        activeHrMean = presetActiveMean
+        activeHrStd = presetActiveStd
+
+        // 로컬 저장값이 있으면 덮어쓰기
         val savedHR = prefs.getInt("baselineHR", 0)
         if (prefs.getBoolean("baselineComplete", false) && savedHR > 0) {
             restHrMean = savedHR.toDouble()
             baselineReady = true
             lastBaselineHR = savedHR
-            Log.d(TAG, "📂 Baseline restored from local: restHR=$savedHR")
+            Log.d(TAG, "📂 Baseline from local: restHR=$savedHR, preset: rest=${presetRestMean.toInt()}, active=${presetActiveMean.toInt()}")
+        } else {
+            // 프리셋으로 시작 — 첫날에도 어느 정도 합리적인 기준
+            baselineReady = true
+            lastBaselineHR = presetRestMean.toInt()
+            Log.d(TAG, "🏷 Preset baseline: work=${prefs.getString("workType","light")}, rest=${presetRestMean.toInt()}, active=${presetActiveMean.toInt()}")
         }
 
         // 서버에서 더 정확한 베이스라인 복원 시도 (비동기)
@@ -174,6 +191,7 @@ class SensorService : Service(), SensorEventListener {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         registerSensors()
+        startHealthServices()
         startGPS()
         lastMovementTime = System.currentTimeMillis()
         startMonitoringLoop()
@@ -216,6 +234,36 @@ class SensorService : Service(), SensorEventListener {
 
         // 사용 가능한 전체 센서 목록 로그
         Log.d(TAG, "Available sensors: ${sensorManager.getSensorList(Sensor.TYPE_ALL).map { "${it.name}(${it.stringType})" }.joinToString(", ")}")
+    }
+
+    // ════════════════════════════════════════
+    // Health Services API (Samsung Health 연동)
+    // ════════════════════════════════════════
+
+    private var healthManager: HealthServiceManager? = null
+
+    private fun startHealthServices() {
+        try {
+            healthManager = HealthServiceManager(this).apply {
+                onHeartRate = { hr ->
+                    if (hr > 0) {
+                        heartRate = hr
+                        lastValidHeartRate = hr
+                        heartRateZeroCount = 0
+                    }
+                }
+                onSpO2 = { value ->
+                    if (value in 70..100) {
+                        spo2 = value
+                        Log.d(TAG, "🫁 SpO₂ updated: $value%")
+                    }
+                }
+                start()
+            }
+            Log.d(TAG, "✅ Health Services API started (심박+SpO₂)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Health Services unavailable, using basic sensors: ${e.message}")
+        }
     }
 
     private fun startGPS() {
@@ -520,11 +568,17 @@ class SensorService : Service(), SensorEventListener {
 
         when (currentState) {
             WorkerState.NORMAL -> {
-                // 활동 상태별 기준 대비 2.5σ 이상 벗어나면 이상 감지
-                // (활동 중이면 활동 기준, 안정 시면 안정 기준)
-                val isHrAnomaly = hrDeviation > 2.5 || hrDeviation < -2.5
+                // 적응형 민감도: 샘플 많을수록 정밀, 적으면 관대
+                val sigmaThreshold = when {
+                    totalSamples < 60 -> 4.0    // 첫 5분: 매우 관대 (프리셋 기준)
+                    totalSamples < 300 -> 3.5   // 첫 30분: 관대
+                    totalSamples < 1000 -> 3.0  // 1시간+: 보통
+                    else -> 2.5                  // 충분히 학습: 정밀
+                }
+                val isHrAnomaly = hrDeviation > sigmaThreshold || hrDeviation < -sigmaThreshold
                 val isSpo2Anomaly = spo2 in 1..93
-                val isAbsoluteHigh = heartRate > 130  // 절대 상한 (어떤 상태든)
+                val absoluteMax = if (isActive) 150 else 130  // 활동 시 상한 높임
+                val isAbsoluteHigh = heartRate > absoluteMax
 
                 if (isAbsoluteHigh || isSpo2Anomaly || (isHrAnomaly && !isActive)) {
                     // 안정 시 이상 또는 절대 상한 초과 또는 SpO₂ 저하
@@ -666,9 +720,24 @@ class SensorService : Service(), SensorEventListener {
     // ════════════════════════════════════════
 
     fun onAcknowledge() {
-        Log.d(TAG, "Worker acknowledged alert")
+        Log.d(TAG, "Worker acknowledged alert — feeding HR=$heartRate as normal")
         currentState = WorkerState.ACKNOWLEDGED
-        monitorIntervalMs = 2000L  // 추적 감시 모드 (2초)
+        monitorIntervalMs = WATCH_INTERVAL  // 추적 감시
+
+        // "괜찮아요" = 현재 심박은 정상 → 학습 데이터에 추가!
+        // 이렇게 하면 사용자가 정상이라고 확인한 심박이 베이스라인에 반영됨
+        if (heartRate > 0) {
+            val isActive = activityLevel > ACTIVITY_THRESHOLD
+            if (isActive) {
+                // 활동 중 → 활동 베이스라인 확장
+                for (i in 1..5) activeHrHistory.add(heartRate) // 가중치 5배
+                Log.d(TAG, "📈 User confirmed active HR=$heartRate as normal → activeHrMean updating")
+            } else {
+                // 안정 시 → 안정 베이스라인 확장
+                for (i in 1..5) restHrHistory.add(heartRate)
+                Log.d(TAG, "📈 User confirmed rest HR=$heartRate as normal → restHrMean updating")
+            }
+        }
 
         // P2P 경보 중이었다면 해제
         BleAlertService.cancelEmergency(this)
@@ -828,6 +897,7 @@ class SensorService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
+        healthManager?.stop()
         scope.cancel()
         super.onDestroy()
     }

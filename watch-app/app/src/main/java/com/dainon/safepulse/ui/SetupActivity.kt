@@ -4,23 +4,16 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
+import android.widget.RadioGroup
 import androidx.appcompat.app.AppCompatActivity
 import com.dainon.safepulse.R
 import com.dainon.safepulse.service.SensorService
 
-/**
- * 작업자 설정 화면
- * - 첫 실행 또는 착용자 변경 시 표시
- * - Worker ID, 서버 주소 설정
- * - 새 착용자: 베이스라인 초기화
- * - 기존 유지: 이전 학습 데이터 유지
- */
 class SetupActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 이미 설정 완료면 바로 메인으로 (설정 변경은 메인에서 길게 누르기)
         val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
         if (prefs.getBoolean("setupDone", false) && !intent.getBooleanExtra("forceSetup", false)) {
             SensorService.WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
@@ -32,23 +25,42 @@ class SetupActivity : AppCompatActivity() {
 
         val etWorkerId = findViewById<EditText>(R.id.etWorkerId)
         val etServerUrl = findViewById<EditText>(R.id.etServerUrl)
+        val rgWorkType = findViewById<RadioGroup>(R.id.rgWorkType)
         val btnNewUser = findViewById<Button>(R.id.btnNewUser)
         val btnKeepData = findViewById<Button>(R.id.btnKeepData)
 
-        // 이전 설정 불러오기
         etWorkerId.setText(prefs.getString("workerId", "W-001"))
         etServerUrl.setText(prefs.getString("serverUrl", "http://192.168.0.10:4000"))
 
-        // 새 착용자 — 베이스라인 초기화
+        // 새 착용자
         btnNewUser.setOnClickListener {
-            saveSettings(etWorkerId.text.toString(), etServerUrl.text.toString())
-            // 베이스라인 초기화
+            val workType = when (rgWorkType.checkedRadioButtonId) {
+                R.id.rbOffice -> "office"
+                R.id.rbLight -> "light"
+                R.id.rbHeavy -> "heavy"
+                R.id.rbOutdoor -> "outdoor"
+                else -> "light"
+            }
+            saveSettings(etWorkerId.text.toString(), etServerUrl.text.toString(), workType)
+
+            // 작업 유형별 초기 베이스라인 프리셋
+            val (restMean, restStd, activeMean, activeStd) = when (workType) {
+                "office"  -> arrayOf(70.0, 10.0, 85.0, 12.0)   // 사무직
+                "light"   -> arrayOf(75.0, 12.0, 95.0, 15.0)   // 경량
+                "heavy"   -> arrayOf(78.0, 12.0, 105.0, 18.0)  // 중량
+                "outdoor" -> arrayOf(80.0, 15.0, 115.0, 20.0)  // 야외 고강도
+                else      -> arrayOf(75.0, 12.0, 95.0, 15.0)
+            }
+
             prefs.edit()
                 .putBoolean("baselineComplete", false)
                 .putLong("learningStart", System.currentTimeMillis())
-                .putInt("baselineHR", 0)
-                .remove("restHrMean").remove("restHrStd")
-                .remove("activeHrMean").remove("activeHrStd")
+                .putInt("baselineHR", restMean.toInt())
+                .putFloat("presetRestMean", restMean.toFloat())
+                .putFloat("presetRestStd", restStd.toFloat())
+                .putFloat("presetActiveMean", activeMean.toFloat())
+                .putFloat("presetActiveStd", activeStd.toFloat())
+                .putString("workType", workType)
                 .apply()
 
             goToMain()
@@ -56,22 +68,23 @@ class SetupActivity : AppCompatActivity() {
 
         // 기존 유지
         btnKeepData.setOnClickListener {
-            saveSettings(etWorkerId.text.toString(), etServerUrl.text.toString())
+            saveSettings(etWorkerId.text.toString(), etServerUrl.text.toString(),
+                prefs.getString("workType", "light") ?: "light")
             goToMain()
         }
     }
 
-    private fun saveSettings(workerId: String, serverUrl: String) {
+    private fun saveSettings(workerId: String, serverUrl: String, workType: String) {
         val id = workerId.ifBlank { "W-001" }
         val url = serverUrl.ifBlank { "http://192.168.0.10:4000" }
 
         getSharedPreferences("safepulse", MODE_PRIVATE).edit()
             .putString("workerId", id)
             .putString("serverUrl", url)
+            .putString("workType", workType)
             .putBoolean("setupDone", true)
             .apply()
 
-        // 서비스에 반영
         SensorService.WORKER_ID = id
     }
 

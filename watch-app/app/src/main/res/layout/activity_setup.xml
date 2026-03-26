@@ -93,6 +93,59 @@
             android:inputType="textUri"
             android:layout_marginBottom="12dp" />
 
+        <!-- 작업 유형 선택 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="작업 유형"
+            android:textSize="10sp"
+            android:textColor="#7A8FA3"
+            android:layout_marginBottom="2dp" />
+
+        <RadioGroup
+            android:id="@+id/rgWorkType"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+
+            <RadioButton
+                android:id="@+id/rbOffice"
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:text="사무/관제 (앉아서 근무)"
+                android:textSize="11sp"
+                android:textColor="#E0E6ED"
+                android:buttonTint="#2E75B6" />
+
+            <RadioButton
+                android:id="@+id/rbLight"
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:text="경량 작업 (수하물, 청소)"
+                android:textSize="11sp"
+                android:textColor="#E0E6ED"
+                android:buttonTint="#2E75B6"
+                android:checked="true" />
+
+            <RadioButton
+                android:id="@+id/rbHeavy"
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:text="중량 작업 (화물, 정비)"
+                android:textSize="11sp"
+                android:textColor="#E0E6ED"
+                android:buttonTint="#2E75B6" />
+
+            <RadioButton
+                android:id="@+id/rbOutdoor"
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:text="야외 고강도 (활주로)"
+                android:textSize="11sp"
+                android:textColor="#E0E6ED"
+                android:buttonTint="#2E75B6" />
+        </RadioGroup>
+
         <!-- 새 착용자 버튼 -->
         <Button
             android:id="@+id/btnNewUser"
