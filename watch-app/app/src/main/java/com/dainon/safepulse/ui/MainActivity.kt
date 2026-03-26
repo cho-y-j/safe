@@ -455,14 +455,19 @@ class MainActivity : AppCompatActivity() {
         val needed = perms.filter { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (needed.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toTypedArray(), 100)
-        } else if (workMode == WorkMode.WORKING) {
-            startServices(); startBle()
+        } else {
+            // 권한 있으면 항상 BLE 시작 (폰이 워치를 찾을 수 있게)
+            startBle()
+            if (workMode == WorkMode.WORKING) startServices()
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 100 && workMode == WorkMode.WORKING) { startServices(); startBle() }
+        if (requestCode == 100) {
+            startBle()  // 항상 BLE 광고
+            if (workMode == WorkMode.WORKING) startServices()
+        }
     }
 
     private fun startServices() {

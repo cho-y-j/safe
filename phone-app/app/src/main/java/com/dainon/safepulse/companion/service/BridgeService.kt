@@ -54,9 +54,18 @@ class BridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("워치 연결 대기 중..."))
-        startBleScanning()
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification("워치 연결 대기 중..."))
+        } catch (e: Exception) {
+            Log.e(TAG, "Foreground failed: ${e.message}")
+        }
+        try {
+            startBleScanning()
+        } catch (e: Exception) {
+            Log.e(TAG, "BLE scan failed: ${e.message}")
+        }
         startServerPolling()
+        Log.d(TAG, "BridgeService started")
     }
 
     // ═══ BLE 스캔 — 워치 신호 수신 ═══
