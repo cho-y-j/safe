@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -19,8 +20,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SafePulseCompanion">
 
+        <meta-data
+            android:name="com.google.android.gms.version"
+            android:value="@integer/google_play_services_version" />
+
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".phone.ui.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -29,32 +34,16 @@
         </activity>
 
         <activity
-            android:name=".ui.HealthReportActivity"
+            android:name=".phone.ui.HealthReportActivity"
             android:exported="false" />
 
-        <!-- Wearable Data Layer (워치→폰 기존 BT 활용) -->
         <service
-            android:name=".service.WearableListenerService"
-            android:exported="true"
-            android:permission="com.google.android.gms.permission.BIND_LISTENER">
-            <intent-filter>
-                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
-                <data android:scheme="wear" android:host="*" android:pathPrefix="/safepulse" />
-            </intent-filter>
-        </service>
-
-        <meta-data
-            android:name="com.google.android.gms.version"
-            android:value="@integer/google_play_services_version" />
-
-        <!-- BLE 브릿지 (백업용) -->
-        <service
-            android:name=".service.BridgeService"
+            android:name=".phone.service.BridgeService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
         <service
-            android:name=".service.FCMService"
+            android:name=".phone.service.FCMService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />

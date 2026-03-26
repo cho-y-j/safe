@@ -1,4 +1,4 @@
-package com.dainon.safepulse.companion.service
+package com.dainon.safepulse.phone.service
 
 import android.app.*
 import android.bluetooth.*
@@ -7,8 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.*
 import android.util.Log
-import com.dainon.safepulse.companion.BuildConfig
-import com.dainon.safepulse.companion.ui.MainActivity
+import com.dainon.safepulse.BuildConfig
+import com.dainon.safepulse.phone.ui.MainActivity
 import com.google.gson.Gson
 import kotlinx.coroutines.*
 import okhttp3.*

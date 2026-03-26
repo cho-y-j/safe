@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.dainon.safepulse.companion"
+    namespace = "com.dainon.safepulse"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.dainon.safepulse.companion"
+        applicationId = "com.dainon.safepulse"
         minSdk = 28
         targetSdk = 34
         versionCode = 1

@@ -7,81 +7,56 @@ import com.google.gson.Gson
 
 /**
  * Wearable Data Layer API — 워치↔폰 통신
- * 기존 블루투스 연결을 활용 (별도 BLE 광고/스캔 불필요)
+ * Tasks.await() 대신 완전 비동기 처리
  */
 object WearableCommService {
 
     private const val TAG = "WearComm"
-    private const val PATH_SENSOR = "/safepulse/sensor"
+    private const val PATH_STATUS = "/safepulse/status"
     private const val PATH_ALERT = "/safepulse/alert"
     private const val PATH_ACK = "/safepulse/ack"
-    private const val PATH_STATUS = "/safepulse/status"
 
     private val gson = Gson()
 
-    /** 센서 데이터를 폰에 전송 */
-    fun sendSensorData(context: Context, data: Map<String, Any>) {
-        try {
-            val json = gson.toJson(data).toByteArray()
-            Wearable.getMessageClient(context).sendMessage(
-                getConnectedPhoneId(context) ?: return,
-                PATH_SENSOR, json
-            ).addOnSuccessListener {
-                Log.d(TAG, "📱 Sensor data sent to phone")
-            }.addOnFailureListener {
-                Log.w(TAG, "Phone send failed: ${it.message}")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "WearComm error: ${e.message}")
-        }
+    /** 상태 업데이트를 폰에 전송 */
+    fun sendStatus(context: Context, status: Map<String, Any>) {
+        sendToPhone(context, PATH_STATUS, gson.toJson(status).toByteArray())
     }
 
     /** 긴급 경보를 폰에 전송 */
     fun sendEmergency(context: Context, workerId: String, heartRate: Int, spo2: Int) {
-        try {
-            val data = mapOf("workerId" to workerId, "heartRate" to heartRate, "spo2" to spo2, "type" to "emergency")
-            val json = gson.toJson(data).toByteArray()
-            Wearable.getMessageClient(context).sendMessage(
-                getConnectedPhoneId(context) ?: return,
-                PATH_ALERT, json
-            )
-            Log.w(TAG, "🚨 Emergency sent to phone: $workerId")
-        } catch (e: Exception) {
-            Log.e(TAG, "Emergency send failed: ${e.message}")
-        }
+        val data = mapOf("workerId" to workerId, "heartRate" to heartRate, "spo2" to spo2, "type" to "emergency")
+        sendToPhone(context, PATH_ALERT, gson.toJson(data).toByteArray())
     }
 
     /** 확인(ACK)을 폰에 전송 */
     fun sendAck(context: Context, workerId: String) {
-        try {
-            val data = mapOf("workerId" to workerId, "action" to "ack")
-            Wearable.getMessageClient(context).sendMessage(
-                getConnectedPhoneId(context) ?: return,
-                PATH_ACK, gson.toJson(data).toByteArray()
-            )
-        } catch (_: Exception) {}
+        sendToPhone(context, PATH_ACK, gson.toJson(mapOf("workerId" to workerId, "action" to "ack")).toByteArray())
     }
 
-    /** 상태 업데이트를 폰에 전송 */
-    fun sendStatus(context: Context, status: Map<String, Any>) {
+    /** 비동기로 폰에 메시지 전송 (Tasks.await 사용 안 함) */
+    private fun sendToPhone(context: Context, path: String, data: ByteArray) {
         try {
-            Wearable.getMessageClient(context).sendMessage(
-                getConnectedPhoneId(context) ?: return,
-                PATH_STATUS, gson.toJson(status).toByteArray()
-            )
-        } catch (_: Exception) {}
-    }
-
-    /** 연결된 폰 노드 ID 가져오기 */
-    private fun getConnectedPhoneId(context: Context): String? {
-        return try {
-            val nodes = com.google.android.gms.tasks.Tasks.await(
-                Wearable.getNodeClient(context).connectedNodes
-            )
-            nodes.firstOrNull()?.id
+            Wearable.getNodeClient(context).connectedNodes
+                .addOnSuccessListener { nodes ->
+                    val phoneNode = nodes.firstOrNull()
+                    if (phoneNode != null) {
+                        Wearable.getMessageClient(context).sendMessage(phoneNode.id, path, data)
+                            .addOnSuccessListener {
+                                Log.d(TAG, "📱 Sent to phone: $path (${data.size}bytes)")
+                            }
+                            .addOnFailureListener { e ->
+                                Log.w(TAG, "Send failed: $path → ${e.message}")
+                            }
+                    } else {
+                        Log.w(TAG, "No phone connected")
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "getNodes failed: ${e.message}")
+                }
         } catch (e: Exception) {
-            Log.w(TAG, "No connected phone: ${e.message}")
-            null
+            Log.e(TAG, "WearComm error: ${e.message}")
         }
     }
 }

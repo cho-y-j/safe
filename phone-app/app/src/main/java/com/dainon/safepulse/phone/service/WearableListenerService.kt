@@ -1,4 +1,4 @@
-package com.dainon.safepulse.companion.service
+package com.dainon.safepulse.phone.service
 
 import android.content.Intent
 import android.os.*

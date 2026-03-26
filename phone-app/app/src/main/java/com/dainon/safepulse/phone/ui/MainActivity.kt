@@ -1,4 +1,4 @@
-package com.dainon.safepulse.companion.ui
+package com.dainon.safepulse.phone.ui
 
 import android.Manifest
 import android.content.*
@@ -8,8 +8,8 @@ import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import com.dainon.safepulse.companion.R
-import com.dainon.safepulse.companion.service.BridgeService
+import com.dainon.safepulse.R
+import com.dainon.safepulse.phone.service.BridgeService
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
@@ -196,8 +196,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startWatchListener() {
-        Wearable.getMessageClient(this).addListener(messageListener)
-        android.util.Log.d("WatchMsg", "✅ MessageClient listener registered")
+        try {
+            android.util.Log.d("WatchMsg", "Registering listener...")
+            Wearable.getMessageClient(this).addListener(messageListener)
+                .addOnSuccessListener { android.util.Log.d("WatchMsg", "✅ Listener OK!") }
+                .addOnFailureListener { android.util.Log.e("WatchMsg", "❌ Listener FAIL: ${it.message}") }
+
+            Wearable.getNodeClient(this).connectedNodes
+                .addOnSuccessListener { nodes -> android.util.Log.d("WatchMsg", "Nodes: ${nodes.map { "${it.displayName}(${it.id})" }}") }
+                .addOnFailureListener { android.util.Log.e("WatchMsg", "❌ Nodes FAIL: ${it.message}") }
+        } catch (e: Exception) {
+            android.util.Log.e("WatchMsg", "❌ Exception: ${e.message}")
+        }
     }
 
     override fun onResume() {

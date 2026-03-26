@@ -1,11 +1,11 @@
-package com.dainon.safepulse.companion.service
+package com.dainon.safepulse.phone.service
 
 import android.app.*
 import android.content.Intent
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.dainon.safepulse.companion.ui.MainActivity
+import com.dainon.safepulse.phone.ui.MainActivity
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 

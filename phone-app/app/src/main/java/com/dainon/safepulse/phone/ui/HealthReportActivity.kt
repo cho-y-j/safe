@@ -1,9 +1,9 @@
-package com.dainon.safepulse.companion.ui
+package com.dainon.safepulse.phone.ui
 
 import android.os.Bundle
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.dainon.safepulse.companion.R
+import com.dainon.safepulse.R
 import com.google.gson.Gson
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
