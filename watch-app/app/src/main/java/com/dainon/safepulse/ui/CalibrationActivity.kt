@@ -8,7 +8,10 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
+import android.os.PowerManager
+import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -17,15 +20,18 @@ import kotlinx.coroutines.*
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-/**
- * 캘리브레이션 — 10분간 평소처럼 작업하며 개인 베이스라인 측정
- */
 class CalibrationActivity : AppCompatActivity(), SensorEventListener {
+
+    companion object {
+        const val TAG = "Calibration"
+        private const val ABSOLUTE_MIN = 40
+    }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var sensorManager: SensorManager
+    private var wakeLock: PowerManager.WakeLock? = null
 
-    // UI
+    private lateinit var readyView: LinearLayout
     private lateinit var calibratingView: LinearLayout
     private lateinit var completeView: LinearLayout
     private lateinit var pbCalibration: ProgressBar
@@ -39,22 +45,26 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var tvFinalActive: TextView
     private lateinit var tvAlertRange: TextView
 
-    // 데이터 수집
     private val restSamples = mutableListOf<Int>()
     private val activeSamples = mutableListOf<Int>()
     private var currentHR = 0
-    private var activityLevel = 0f
     private var activitySum = 0f
     private var activityCount = 0
 
-    private val CALIBRATION_MS = 10 * 60 * 1000L  // 10분
+    private val CALIBRATION_MS = 10 * 60 * 1000L
     private val ACTIVITY_THRESHOLD = 1.5f
     private var startTime = 0L
+    private var isCalibrating = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 화면 켜짐 유지
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         setContentView(R.layout.activity_calibration)
 
+        readyView = findViewById(R.id.readyView)
         calibratingView = findViewById(R.id.calibratingView)
         completeView = findViewById(R.id.completeView)
         pbCalibration = findViewById(R.id.pbCalibration)
@@ -68,32 +78,50 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
         tvFinalActive = findViewById(R.id.tvFinalActive)
         tvAlertRange = findViewById(R.id.tvAlertRange)
 
+        // "학습 시작" 버튼
+        findViewById<Button>(R.id.btnStartCalibration).setOnClickListener {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BODY_SENSORS, Manifest.permission.ACTIVITY_RECOGNITION), 100)
+            } else {
+                beginCalibration()
+            }
+        }
+
+        // "작업 시작" 버튼
         findViewById<Button>(R.id.btnStartWork).setOnClickListener {
             startActivity(Intent(this, MainActivity::class.java))
             finish()
         }
 
-        // 권한 확인
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BODY_SENSORS, Manifest.permission.ACTIVITY_RECOGNITION), 100)
-        } else {
-            startCalibration()
-        }
+        // 대기 화면 표시
+        readyView.visibility = View.VISIBLE
+        calibratingView.visibility = View.GONE
+        completeView.visibility = View.GONE
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        startCalibration()
+        if (requestCode == 100) beginCalibration()
     }
 
-    private fun startCalibration() {
-        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+    private fun beginCalibration() {
+        Log.d(TAG, "▶ Calibration started")
+        isCalibrating = true
 
-        // 심박 센서
+        readyView.visibility = View.GONE
+        calibratingView.visibility = View.VISIBLE
+        completeView.visibility = View.GONE
+
+        // WakeLock으로 화면 꺼져도 센서 유지
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "safepulse:calibration")
+        wakeLock?.acquire(15 * 60 * 1000L) // 15분
+
+        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)?.let {
             sensorManager.registerListener(this, it, 3000000)
+            Log.d(TAG, "HR sensor registered")
         }
-        // 가속도계
         sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
@@ -103,23 +131,17 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        if (!isCalibrating) return
         when (event.sensor.type) {
             Sensor.TYPE_HEART_RATE -> {
                 val hr = event.values[0].toInt()
                 if (hr > 30) {
                     currentHR = hr
-
-                    // 활동량 계산
-                    activityLevel = if (activityCount > 0) activitySum / activityCount else 0f
+                    val actLevel = if (activityCount > 0) activitySum / activityCount else 0f
                     activitySum = 0f
                     activityCount = 0
-
-                    // 활동/안정 분류하여 저장
-                    if (activityLevel > ACTIVITY_THRESHOLD) {
-                        activeSamples.add(hr)
-                    } else {
-                        restSamples.add(hr)
-                    }
+                    if (actLevel > ACTIVITY_THRESHOLD) activeSamples.add(hr) else restSamples.add(hr)
+                    Log.d(TAG, "💓 HR=$hr, rest=${restSamples.size}, active=${activeSamples.size}, actLevel=${"%.1f".format(actLevel)}")
                 }
             }
             Sensor.TYPE_ACCELEROMETER -> {
@@ -134,7 +156,7 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
 
     private fun startTimer() {
         scope.launch {
-            while (isActive) {
+            while (isActive && isCalibrating) {
                 val elapsed = System.currentTimeMillis() - startTime
                 val remaining = CALIBRATION_MS - elapsed
                 val progress = ((elapsed.toFloat() / CALIBRATION_MS) * 100).toInt().coerceIn(0, 100)
@@ -146,9 +168,8 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
 
                 val min = (remaining / 60000).toInt()
                 val sec = ((remaining % 60000) / 1000).toInt()
-
                 pbCalibration.progress = progress
-                tvRemaining.text = "남은 시간: ${min}:${String.format("%02d", sec)}"
+                tvRemaining.text = "${min}:${String.format("%02d", sec)}"
                 tvCurrentHR.text = "💓 ${if (currentHR > 0) currentHR else "--"}"
 
                 if (restSamples.isNotEmpty()) {
@@ -166,18 +187,21 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun onCalibrationComplete() {
+        isCalibrating = false
         sensorManager.unregisterListener(this)
+        wakeLock?.release()
 
-        val restMean = if (restSamples.size >= 5) restSamples.average().toInt() else 75
-        val activeMean = if (activeSamples.size >= 5) activeSamples.average().toInt() else 95
+        val restMean = if (restSamples.size >= 3) restSamples.average().toInt() else 75
+        val activeMean = if (activeSamples.size >= 3) activeSamples.average().toInt() else 95
 
         val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
         val alertRange = prefs.getInt("alertRangeUpper", 55)
-
         val upperAlert = restMean + alertRange
-        val lowerAlert = restMean - 30
+        val lowerAlert = (restMean - 30).coerceAtLeast(ABSOLUTE_MIN)
 
-        // 결과 저장
+        Log.d(TAG, "✅ Complete! rest=$restMean(${restSamples.size}건), active=$activeMean(${activeSamples.size}건), alert=${upperAlert}↑/${lowerAlert}↓")
+
+        // 저장
         prefs.edit()
             .putInt("baselineHR", restMean)
             .putFloat("presetRestMean", restMean.toFloat())
@@ -186,7 +210,8 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
             .putBoolean("calibrationDone", true)
             .apply()
 
-        // 완료 화면 표시
+        // 완료 화면
+        readyView.visibility = View.GONE
         calibratingView.visibility = View.GONE
         completeView.visibility = View.VISIBLE
 
@@ -197,7 +222,9 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
 
     override fun onDestroy() {
         try { sensorManager.unregisterListener(this) } catch (_: Exception) {}
+        try { wakeLock?.release() } catch (_: Exception) {}
         scope.cancel()
         super.onDestroy()
     }
+
 }

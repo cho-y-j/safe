@@ -11,132 +11,81 @@
         android:orientation="vertical"
         android:gravity="center_horizontal">
 
-        <!-- 학습 중 화면 -->
+        <!-- ═══ 대기 화면: 학습 시작 버튼 ═══ -->
+        <LinearLayout
+            android:id="@+id/readyView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="8dp"
+            android:visibility="visible">
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="초기 학습" android:textSize="16sp" android:textColor="#2E75B6"
+                android:textStyle="bold" android:gravity="center" android:layout_marginBottom="8dp" />
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="워치를 착용하고\n아래 버튼을 누르면\n10분간 학습합니다.\n\n평소처럼 움직이며\n작업하시면 됩니다."
+                android:textSize="12sp" android:textColor="#B0BEC5" android:gravity="center"
+                android:lineSpacingExtra="2dp" android:layout_marginBottom="12dp" />
+
+            <Button android:id="@+id/btnStartCalibration"
+                android:layout_width="160dp" android:layout_height="52dp"
+                android:text="▶ 학습 시작" android:textSize="16sp"
+                android:textColor="#FFFFFF" android:backgroundTint="#2E75B6" />
+        </LinearLayout>
+
+        <!-- ═══ 학습 중 ═══ -->
         <LinearLayout
             android:id="@+id/calibratingView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:gravity="center"
-            android:visibility="visible">
+            android:visibility="gone">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="초기 학습"
-                android:textSize="16sp"
-                android:textColor="#2E75B6"
-                android:textStyle="bold"
-                android:gravity="center"
-                android:layout_marginBottom="4dp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="학습 중..." android:textSize="14sp" android:textColor="#2E75B6"
+                android:textStyle="bold" android:gravity="center" android:layout_marginBottom="2dp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="평소처럼 작업하세요" android:textSize="11sp" android:textColor="#B0BEC5"
+                android:gravity="center" android:layout_marginBottom="6dp" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="평소처럼 움직이며\n작업하세요"
-                android:textSize="12sp"
-                android:textColor="#B0BEC5"
-                android:gravity="center"
-                android:layout_marginBottom="8dp" />
+            <ProgressBar android:id="@+id/pbCalibration" style="@android:style/Widget.ProgressBar.Horizontal"
+                android:layout_width="match_parent" android:layout_height="6dp" android:max="100"
+                android:progressTint="#2E75B6" android:progressBackgroundTint="#1E3044" />
 
-            <ProgressBar
-                android:id="@+id/pbCalibration"
-                style="@android:style/Widget.ProgressBar.Horizontal"
-                android:layout_width="match_parent"
-                android:layout_height="6dp"
-                android:max="100"
-                android:progressTint="#2E75B6"
-                android:progressBackgroundTint="#1E3044" />
+            <TextView android:id="@+id/tvRemaining" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="10:00" android:textSize="20sp" android:textColor="#E0E6ED"
+                android:textStyle="bold" android:gravity="center" android:layout_marginTop="4dp" />
 
-            <TextView
-                android:id="@+id/tvRemaining"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="남은 시간: 10:00"
-                android:textSize="18sp"
-                android:textColor="#E0E6ED"
-                android:textStyle="bold"
-                android:gravity="center"
-                android:layout_marginTop="4dp" />
+            <TextView android:id="@+id/tvCurrentHR" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="💓 --" android:textSize="24sp" android:textColor="#FFFFFF"
+                android:textStyle="bold" android:layout_marginTop="6dp" />
 
-            <!-- 실시간 심박 -->
-            <TextView
-                android:id="@+id/tvCurrentHR"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="💓 --"
-                android:textSize="24sp"
-                android:textColor="#FFFFFF"
-                android:textStyle="bold"
-                android:layout_marginTop="8dp" />
-
-            <!-- 수집 현황 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginTop="8dp">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="#111D29"
-                    android:padding="6dp"
-                    android:layout_marginEnd="2dp">
-
-                    <TextView
-                        android:id="@+id/tvRestMean"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textSize="18sp"
-                        android:textColor="#43A047"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvRestCount"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="안정 0건"
-                        android:textSize="9sp"
-                        android:textColor="#7A8FA3" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center" android:layout_marginTop="6dp">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:orientation="vertical" android:gravity="center" android:background="#111D29"
+                    android:padding="6dp" android:layout_marginEnd="2dp">
+                    <TextView android:id="@+id/tvRestMean" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="--" android:textSize="18sp" android:textColor="#43A047" android:textStyle="bold" />
+                    <TextView android:id="@+id/tvRestCount" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="안정 0건" android:textSize="9sp" android:textColor="#7A8FA3" />
                 </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="#111D29"
-                    android:padding="6dp"
-                    android:layout_marginStart="2dp">
-
-                    <TextView
-                        android:id="@+id/tvActiveMean"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textSize="18sp"
-                        android:textColor="#2E75B6"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvActiveCount"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="활동 0건"
-                        android:textSize="9sp"
-                        android:textColor="#7A8FA3" />
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:orientation="vertical" android:gravity="center" android:background="#111D29"
+                    android:padding="6dp" android:layout_marginStart="2dp">
+                    <TextView android:id="@+id/tvActiveMean" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="--" android:textSize="18sp" android:textColor="#2E75B6" android:textStyle="bold" />
+                    <TextView android:id="@+id/tvActiveCount" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="활동 0건" android:textSize="9sp" android:textColor="#7A8FA3" />
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 완료 화면 -->
+        <!-- ═══ 완료 ═══ -->
         <LinearLayout
             android:id="@+id/completeView"
             android:layout_width="match_parent"
@@ -145,95 +94,38 @@
             android:gravity="center"
             android:visibility="gone">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="✅ 학습 완료!"
-                android:textSize="18sp"
-                android:textColor="#43A047"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="✅ 학습 완료!" android:textSize="18sp" android:textColor="#43A047"
+                android:textStyle="bold" android:layout_marginBottom="8dp" />
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="8dp">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="#111D29"
-                    android:padding="8dp"
-                    android:layout_marginEnd="2dp">
-
-                    <TextView
-                        android:id="@+id/tvFinalRest"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="-- bpm"
-                        android:textSize="20sp"
-                        android:textColor="#43A047"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="안정 시"
-                        android:textSize="10sp"
-                        android:textColor="#7A8FA3" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center" android:layout_marginBottom="8dp">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:orientation="vertical" android:gravity="center" android:background="#111D29"
+                    android:padding="8dp" android:layout_marginEnd="2dp">
+                    <TextView android:id="@+id/tvFinalRest" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="-- bpm" android:textSize="20sp" android:textColor="#43A047" android:textStyle="bold" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="안정 시" android:textSize="10sp" android:textColor="#7A8FA3" />
                 </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center"
-                    android:background="#111D29"
-                    android:padding="8dp"
-                    android:layout_marginStart="2dp">
-
-                    <TextView
-                        android:id="@+id/tvFinalActive"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="-- bpm"
-                        android:textSize="20sp"
-                        android:textColor="#2E75B6"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="활동 시"
-                        android:textSize="10sp"
-                        android:textColor="#7A8FA3" />
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:orientation="vertical" android:gravity="center" android:background="#111D29"
+                    android:padding="8dp" android:layout_marginStart="2dp">
+                    <TextView android:id="@+id/tvFinalActive" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="-- bpm" android:textSize="20sp" android:textColor="#2E75B6" android:textStyle="bold" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="활동 시" android:textSize="10sp" android:textColor="#7A8FA3" />
                 </LinearLayout>
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/tvAlertRange"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="경보 기준: --↑ / --↓"
-                android:textSize="12sp"
-                android:textColor="#B0BEC5"
-                android:gravity="center"
-                android:layout_marginBottom="12dp" />
+            <TextView android:id="@+id/tvAlertRange" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="경보: --↑ / --↓" android:textSize="12sp" android:textColor="#B0BEC5"
+                android:gravity="center" android:layout_marginBottom="12dp" />
 
-            <Button
-                android:id="@+id/btnStartWork"
-                android:layout_width="160dp"
-                android:layout_height="52dp"
-                android:text="▶ 작업 시작"
-                android:textSize="16sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#2E75B6" />
+            <Button android:id="@+id/btnStartWork"
+                android:layout_width="160dp" android:layout_height="52dp"
+                android:text="▶ 작업 시작" android:textSize="16sp"
+                android:textColor="#FFFFFF" android:backgroundTint="#2E75B6" />
         </LinearLayout>
 
     </LinearLayout>
