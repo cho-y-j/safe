@@ -17,6 +17,7 @@ import adminRoutes from './routes/admin';
 import workerRoutes from './routes/workers';
 import alertRoutes from './routes/alerts';
 import scenarioRoutes from './routes/scenarios';
+import messageRoutes from './routes/messages';
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use('/api/alerts', alertRoutes);
 app.use('/api/scenarios', scenarioRoutes);
 app.use('/api/aed', aedRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/messages', messageRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

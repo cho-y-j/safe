@@ -9,3 +9,5 @@ __pycache__/
 build/
 *.apk
 .idea/
+firebase-admin-key.json
+google-services.json

@@ -10,6 +10,7 @@ import PublicData from './components/publicData/PublicData';
 import Congestion from './components/congestion/Congestion';
 import Reports from './components/reports/Reports';
 import AdminPanel from './components/admin/AdminPanel';
+import MessageCenter from './components/messages/MessageCenter';
 import MapView from './components/map/MapView';
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
             <Route path="/workers" element={<Workers />} />
             <Route path="/public-data" element={<PublicData />} />
             <Route path="/congestion" element={<Congestion />} />
+            <Route path="/messages" element={<MessageCenter />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/admin" element={<AdminPanel />} />
           </Routes>
