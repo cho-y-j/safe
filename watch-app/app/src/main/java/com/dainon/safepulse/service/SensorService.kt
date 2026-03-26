@@ -125,16 +125,36 @@ class SensorService : Service(), SensorEventListener {
     private var latitude = 37.4602
     private var longitude = 126.4407
 
-    // ──── 모니터링 주기 (특허: 이중 모드 전력 관리) ────
-    private var monitorIntervalMs = 30000L   // 저전력 모드: 30초
-    private val NORMAL_INTERVAL = 30000L     // 평상시 30초 (배터리 24~48시간)
-    private val WATCH_INTERVAL = 10000L      // 추적 감시: 10초
-    private val ALERT_INTERVAL = 3000L       // 이상 감지 시: 3초
-    private val EMERGENCY_INTERVAL = 1000L   // 응급: 1초
+    // ──── 5단계 적응형 모니터링 (연구 기반) ────
+    enum class MonitorLevel {
+        IDLE_REST,      // 1단계: 안정 감시 (60초, 배터리 48h)
+        ACTIVE,         // 2단계: 활동 감시 (30초, 36h)
+        CHANGE_DETECT,  // 3단계: 변화 감지 (15초, 24h)
+        ALERT_NEAR,     // 4단계: 경보 근접 (5초, 12h)
+        ALERT_OVER      // 5단계: 경보 초과 (1초, 4h)
+    }
 
-    // 서버 전송 주기 (센서 읽기보다 덜 자주)
+    private var monitorLevel = MonitorLevel.IDLE_REST
+    private var monitorIntervalMs = 60000L
+    private var lastMeasuredHR = 0           // 이전 측정 심박 (급변 감지용)
+
+    private fun getIntervalForLevel(level: MonitorLevel): Long = when (level) {
+        MonitorLevel.IDLE_REST -> 60000L      // 60초
+        MonitorLevel.ACTIVE -> 30000L         // 30초
+        MonitorLevel.CHANGE_DETECT -> 15000L  // 15초
+        MonitorLevel.ALERT_NEAR -> 5000L      // 5초
+        MonitorLevel.ALERT_OVER -> 1000L      // 1초
+    }
+
+    private fun getServerSendInterval(level: MonitorLevel): Int = when (level) {
+        MonitorLevel.IDLE_REST -> 5     // 5번 측정마다 = 5분
+        MonitorLevel.ACTIVE -> 4        // 4번 = 2분
+        MonitorLevel.CHANGE_DETECT -> 2 // 2번 = 30초
+        MonitorLevel.ALERT_NEAR -> 2    // 2번 = 10초
+        MonitorLevel.ALERT_OVER -> 1    // 매번 = 즉시
+    }
+
     private var serverSendCounter = 0
-    private val SERVER_SEND_EVERY_N = 2      // N번 센서 읽기마다 1번 전송
 
     override fun onCreate() {
         super.onCreate()
@@ -368,7 +388,7 @@ class SensorService : Service(), SensorEventListener {
                         if (currentState != WorkerState.EMERGENCY) {
                             currentState = WorkerState.FALL_DETECTED
                             ackWaitStartTime = now
-                            monitorIntervalMs = EMERGENCY_INTERVAL
+                            monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
                             notifyWorker("⚠ 넘어지셨나요? 괜찮으시면 5초 내 확인을 눌러주세요!")
                         }
 
@@ -403,13 +423,13 @@ class SensorService : Service(), SensorEventListener {
             Log.w(TAG, "⚠ HR=0 during anomaly ($currentState) → asking first")
             currentState = WorkerState.WAITING_ACK
             ackWaitStartTime = System.currentTimeMillis()
-            monitorIntervalMs = EMERGENCY_INTERVAL
+            monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
             notifyWorker("심박 감지가 안 됩니다. 괜찮으시면 확인을 눌러주세요!")
         } else {
             // 정상에서 심박 0 → 벗었을 가능성 높지만, 그래도 물어봄
             Log.d(TAG, "⌚ HR=0 from normal → likely removed, asking")
             currentState = WorkerState.WATCH_REMOVED
-            monitorIntervalMs = NORMAL_INTERVAL
+            monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
             heartRate = 0
             // 워치 벗은 건 조용히 처리 (진동 안 함)
         }
@@ -419,6 +439,50 @@ class SensorService : Service(), SensorEventListener {
     // 메인 모니터링 루프
     // ════════════════════════════════════════
 
+    /** 적응형 모니터링 레벨 결정 (연구 기반: 5단계) */
+    private fun updateMonitorLevel() {
+        if (!baselineReady || heartRate <= 0) return
+
+        val prevLevel = monitorLevel
+        val upperLimit = restHrMean + alertRangeUpper
+        val diff = heartRate - restHrMean
+        val ratio = diff / alertRangeUpper  // 0.0 = 평균, 1.0 = 경보
+
+        // 심박 급변 감지 (이전 대비 ±15)
+        val suddenChange = lastMeasuredHR > 0 && abs(heartRate - lastMeasuredHR) > 15
+        lastMeasuredHR = heartRate
+
+        // 현재 상태가 EMERGENCY/WAITING_ACK이면 최고속 유지
+        if (currentState == WorkerState.EMERGENCY || currentState == WorkerState.FALL_DETECTED) {
+            monitorLevel = MonitorLevel.ALERT_OVER
+        } else if (currentState == WorkerState.WAITING_ACK || currentState == WorkerState.MILD_ANOMALY) {
+            monitorLevel = MonitorLevel.ALERT_OVER
+        } else if (currentState == WorkerState.ACKNOWLEDGED) {
+            monitorLevel = MonitorLevel.ALERT_NEAR
+        } else if (heartRate > upperLimit.toInt() || heartRate < (restHrMean - alertRangeLower).toInt()) {
+            // 경보 초과
+            monitorLevel = MonitorLevel.ALERT_OVER
+        } else if (ratio > 0.8 || ratio < -0.8) {
+            // 경보 범위 80% 도달
+            monitorLevel = MonitorLevel.ALERT_NEAR
+        } else if (suddenChange) {
+            // 급변 감지
+            monitorLevel = MonitorLevel.CHANGE_DETECT
+        } else if (activityLevel > ACTIVITY_THRESHOLD) {
+            // 활동 중
+            monitorLevel = MonitorLevel.ACTIVE
+        } else {
+            // 안정
+            monitorLevel = MonitorLevel.IDLE_REST
+        }
+
+        monitorIntervalMs = getIntervalForLevel(monitorLevel)
+
+        if (prevLevel != monitorLevel) {
+            Log.d(TAG, "📊 Monitor level: $prevLevel → $monitorLevel (${monitorIntervalMs/1000}s, HR=$heartRate, ratio=${"%.1f".format(ratio)})")
+        }
+    }
+
     private fun startMonitoringLoop() {
         scope.launch {
             while (isActive) {
@@ -427,15 +491,18 @@ class SensorService : Service(), SensorEventListener {
                 // 무움직임 시간 갱신
                 noMovementSeconds = ((System.currentTimeMillis() - lastMovementTime) / 1000).toInt()
 
-                // 단계 1: 베이스라인 학습/업데이트
+                // 적응형 모니터링 레벨 결정
+                updateMonitorLevel()
+
+                // 베이스라인 학습/업데이트
                 updateBaseline()
 
-                // 단계 2~4: 상태 판단
+                // 상태 판단
                 evaluateState()
 
-                // 서버 전송 — 매번이 아닌 N번에 1번 (배터리 절약)
+                // 서버 전송 — 레벨별 주기
                 serverSendCounter++
-                if (serverSendCounter >= SERVER_SEND_EVERY_N) {
+                if (serverSendCounter >= getServerSendInterval(monitorLevel)) {
                     serverSendCounter = 0
                     sendToServer()
                 }
@@ -593,7 +660,7 @@ class SensorService : Service(), SensorEventListener {
                     // 절대 상한/하한 → 즉시 경보
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
-                    monitorIntervalMs = ALERT_INTERVAL
+                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.CHANGE_DETECT)
                     val reason = when {
                         isAbsoluteHigh -> "심박 ${heartRate}bpm — 절대 상한 초과"
                         isAbsoluteLow -> "심박 ${heartRate}bpm — 서맥 위험"
@@ -605,7 +672,7 @@ class SensorService : Service(), SensorEventListener {
                     // 개인 범위 이탈
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
-                    monitorIntervalMs = ALERT_INTERVAL
+                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.CHANGE_DETECT)
                     val reason = when {
                         isTooHigh -> "심박 ${heartRate}bpm (기준 ${adjustedUpper} 초과)"
                         isTooLow -> "심박 ${heartRate}bpm (기준 ${lowerLimit.toInt()} 미만)"
@@ -651,14 +718,14 @@ class SensorService : Service(), SensorEventListener {
                 if (heartRate > 0) {
                     Log.d(TAG, "⌚ Watch back on! HR=$heartRate → NORMAL")
                     currentState = WorkerState.NORMAL
-                    monitorIntervalMs = NORMAL_INTERVAL
+                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
                     heartRateZeroCount = 0
                 }
             }
 
             WorkerState.ACKNOWLEDGED -> {
                 // 확인 눌렀지만 추적 감시
-                monitorIntervalMs = WATCH_INTERVAL
+                monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_NEAR)
 
                 // 절대 상한 또는 SpO₂ 심각 → 재알림
                 if (heartRate >= ABSOLUTE_MAX_HR || heartRate in 1 until ABSOLUTE_MIN_HR || (spo2 in 1..90)) {
@@ -672,7 +739,7 @@ class SensorService : Service(), SensorEventListener {
                 val lowerOk = heartRate > (restHrMean - alertRangeLower * 0.7).toInt()
                 if (heartRate > 0 && upperOk && lowerOk && (spo2 == 0 || spo2 > 95)) {
                     currentState = WorkerState.NORMAL
-                    monitorIntervalMs = NORMAL_INTERVAL
+                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
                     Log.d(TAG, "✅ Back to normal: HR=$heartRate")
                 }
             }
@@ -689,13 +756,13 @@ class SensorService : Service(), SensorEventListener {
                 // 움직임 감지되면 정상 복귀
                 if (noMovementSeconds < 5) {
                     currentState = WorkerState.NORMAL
-                    monitorIntervalMs = NORMAL_INTERVAL
+                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
                 }
             }
 
             WorkerState.EMERGENCY -> {
                 // 🚨 단계 5: P2P BLE 경보 + 서버 알림 (고출력 모드)
-                monitorIntervalMs = EMERGENCY_INTERVAL  // 1초 간격
+                monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)  // 1초 간격
                 Log.w(TAG, "🚨 EMERGENCY: HR=$heartRate, SpO2=$spo2, noMovement=${noMovementSeconds}s")
 
                 // P2P BLE 경보 발동
@@ -746,7 +813,7 @@ class SensorService : Service(), SensorEventListener {
     fun onAcknowledge() {
         Log.d(TAG, "Worker acknowledged alert — feeding HR=$heartRate as normal")
         currentState = WorkerState.ACKNOWLEDGED
-        monitorIntervalMs = WATCH_INTERVAL  // 추적 감시
+        monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_NEAR)  // 추적 감시
 
         // "괜찮아요" = 현재 심박은 정상 → 학습 데이터에 추가!
         // 이렇게 하면 사용자가 정상이라고 확인한 심박이 베이스라인에 반영됨
