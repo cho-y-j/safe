@@ -47,6 +47,11 @@
             android:name=".ui.MainActivity"
             android:exported="false" />
 
+        <!-- 캘리브레이션 (초기 10분 학습) -->
+        <activity
+            android:name=".ui.CalibrationActivity"
+            android:exported="false" />
+
         <!-- 알림 내역 화면 -->
         <activity
             android:name=".ui.AlertListActivity"

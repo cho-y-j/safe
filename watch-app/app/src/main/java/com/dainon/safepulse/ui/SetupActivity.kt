@@ -17,6 +17,12 @@ class SetupActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
         if (prefs.getBoolean("setupDone", false) && !intent.getBooleanExtra("forceSetup", false)) {
             SensorService.WORKER_ID = prefs.getString("workerId", "W-001") ?: "W-001"
+            // 캘리브레이션 완료 여부 확인
+            if (!prefs.getBoolean("calibrationDone", false)) {
+                startActivity(Intent(this, CalibrationActivity::class.java))
+                finish()
+                return
+            }
             goToMain()
             return
         }
@@ -52,18 +58,27 @@ class SetupActivity : AppCompatActivity() {
                 else      -> arrayOf(75.0, 12.0, 95.0, 15.0)
             }
 
+            // 경보 범위 저장
+            val alertRange = when (workType) {
+                "office"  -> 40
+                "light"   -> 55
+                "heavy"   -> 65
+                "outdoor" -> 80
+                else -> 55
+            }
+
             prefs.edit()
                 .putBoolean("baselineComplete", false)
-                .putLong("learningStart", System.currentTimeMillis())
-                .putInt("baselineHR", restMean.toInt())
+                .putBoolean("calibrationDone", false)
+                .putInt("alertRangeUpper", alertRange)
                 .putFloat("presetRestMean", restMean.toFloat())
-                .putFloat("presetRestStd", restStd.toFloat())
                 .putFloat("presetActiveMean", activeMean.toFloat())
-                .putFloat("presetActiveStd", activeStd.toFloat())
                 .putString("workType", workType)
                 .apply()
 
-            goToMain()
+            // 캘리브레이션 화면으로 이동
+            startActivity(Intent(this, CalibrationActivity::class.java))
+            finish()
         }
 
         // 기존 유지
