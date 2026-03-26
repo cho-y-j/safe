@@ -60,6 +60,42 @@ router.put('/workers/:id', async (req, res) => {
   }
 });
 
+// 작업자 삭제
+router.delete('/workers/:id', async (req, res) => {
+  try {
+    const worker = await Worker.findByPk(req.params.id);
+    if (!worker) return res.status(404).json({ error: 'Not found' });
+    await worker.destroy();
+    res.json({ success: true, id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
+// 작업자 정지 (비활성화)
+router.post('/workers/:id/deactivate', async (req, res) => {
+  try {
+    const worker = await Worker.findByPk(req.params.id);
+    if (!worker) return res.status(404).json({ error: 'Not found' });
+    await worker.update({ isActive: false });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+// 작업자 활성화
+router.post('/workers/:id/activate', async (req, res) => {
+  try {
+    const worker = await Worker.findByPk(req.params.id);
+    if (!worker) return res.status(404).json({ error: 'Not found' });
+    await worker.update({ isActive: true });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
 // 웨어러블 페어링
 router.post('/workers/:id/pair', async (req, res) => {
   try {
