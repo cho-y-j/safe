@@ -103,8 +103,9 @@ class SensorService : Service(), SensorEventListener {
     private var freeFallDetected = false       // 자유낙하 감지
     private var freeFallTime = 0L              // 자유낙하 시작 시각
     private var impactDetected = false         // 충격 감지
-    private val FREE_FALL_THRESHOLD = 3.0f     // 이 이하면 자유낙하 (정상 9.81)
-    private val IMPACT_THRESHOLD = 25.0f       // 이 이상이면 충격
+    // 테스트용 낮은 임계값 (실전: FREE_FALL=3.0, IMPACT=25.0)
+    private val FREE_FALL_THRESHOLD = 5.0f     // 이 이하면 자유낙하 (완화)
+    private val IMPACT_THRESHOLD = 15.0f       // 이 이상이면 충격 (완화)
     private val FALL_WINDOW_MS = 2000L         // 낙하→충격 2초 이내
 
     // ──── 워치 탈착 감지 ────
@@ -135,6 +136,7 @@ class SensorService : Service(), SensorEventListener {
     private val SLEEP_VS_EMERGENCY_SEC = 30
     private val EMERGENCY_ESCALATION_SEC = 90
     private var ackCooldownUntil = 0L       // ACK 후 재에스컬레이션 방지 (30초)
+    private var isEmergencyAlarmActive = false  // 발신자 비프/진동 1회만
 
     // ──── GPS 위치 ────
     private var latitude = 37.4602
@@ -286,6 +288,10 @@ class SensorService : Service(), SensorEventListener {
                     if (event.path == "/safepulse/phone_ack") {
                         Log.d(TAG, "📱 Phone ACK received → acknowledging")
                         onAcknowledge()
+                    }
+                    if (event.path == "/safepulse/phone_dismiss") {
+                        Log.d(TAG, "📱 Phone DISMISS received → dismissing")
+                        onDismiss()
                     }
                 }
             Log.d(TAG, "✅ Phone ACK listener registered")
@@ -894,55 +900,51 @@ class SensorService : Service(), SensorEventListener {
                     return
                 }
 
-                // 🚨 단계 5: P2P BLE 경보 + 서버 알림 (고출력 모드)
-                monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)  // 1초 간격
-                Log.w(TAG, "🚨 EMERGENCY: HR=$heartRate, SpO2=$spo2, noMovement=${noMovementSeconds}s")
+                // 🚨 단계 5: P2P BLE 경보 + 서버 알림
+                monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
 
-                // fullScreenIntent로 AckAlertActivity 표시 (BAL_BLOCK 우회)
-                try {
-                    val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        putExtra("state", "EMERGENCY")
-                    }
-                    val pi = PendingIntent.getActivity(this, 1, ackIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                    val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                        .setContentTitle("긴급 상황")
-                        .setPriority(NotificationCompat.PRIORITY_MAX)
-                        .setCategory(NotificationCompat.CATEGORY_ALARM)
-                        .setFullScreenIntent(pi, true)
-                        .setAutoCancel(true)
-                        .setTimeoutAfter(1000)
-                        .build()
-                    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
-                } catch (_: Exception) {}
+                // 1회만: 알람 + BLE 경보 + AckAlertActivity
+                if (!isEmergencyAlarmActive) {
+                    isEmergencyAlarmActive = true
+                    Log.w(TAG, "🚨 EMERGENCY START: HR=$heartRate, SpO2=$spo2")
 
-                // P2P BLE 경보 발동
-                BleAlertService.broadcastEmergency(this, WORKER_ID)
+                    // AckAlertActivity (CLEAR_TOP으로 MainActivity 위에)
+                    try {
+                        val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            putExtra("state", "EMERGENCY")
+                        }
+                        val pi = PendingIntent.getActivity(this, 1, ackIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
+                            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                            .setContentTitle("긴급 상황")
+                            .setPriority(NotificationCompat.PRIORITY_MAX)
+                            .setCategory(NotificationCompat.CATEGORY_ALARM)
+                            .setFullScreenIntent(pi, true)
+                            .setAutoCancel(true)
+                            .setTimeoutAfter(1000)
+                            .build()
+                        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
+                    } catch (_: Exception) {}
 
-                // 폰에 긴급 전송 (Wearable Data Layer)
+                    // P2P BLE 경보
+                    BleAlertService.broadcastEmergency(this, WORKER_ID)
+
+                    // 발신자 최대 볼륨 연속 진동+비프 (1회 시작, 무한 반복)
+                    emergencyVibrate()
+                }
+
+                // 매번: 서버+폰 상태 전송 (실시간 업데이트)
                 WearableCommService.sendEmergency(this, WORKER_ID, heartRate, spo2)
-
-                // 서버에 긴급 알림
                 scope.launch {
                     ServerClient.sendEmergencyAlert(WORKER_ID, heartRate, spo2, bodyTemp)
                 }
 
-                // 강한 진동 + 소리
-                emergencyVibrate()
-                notifyWorker("🚨 긴급 상황 감지! 주변 동료에게 알림을 전송했습니다.")
-
-                // 90초 후 119 연동 (단계 6)
+                // 90초 후 119 연동
                 val emergencySec = (now - anomalyStartTime) / 1000
                 if (emergencySec >= EMERGENCY_ESCALATION_SEC) {
                     Log.w(TAG, "119 auto-dial triggered")
-                    // TODO: 119 자동 전화
-                }
-
-                // 움직임 + 확인 → 해제
-                if (noMovementSeconds < 5) {
-                    // 움직였지만 바이탈 확인 필요
                 }
             }
         }
@@ -999,6 +1001,7 @@ class SensorService : Service(), SensorEventListener {
         }
 
         // 연속 비프 정지 + P2P 경보 해제
+        isEmergencyAlarmActive = false
         stopEmergencyBeep()
         BleAlertService.cancelEmergency(this)
     }
@@ -1032,9 +1035,10 @@ class SensorService : Service(), SensorEventListener {
         currentState = WorkerState.NORMAL
         ackCooldownUntil = System.currentTimeMillis() + 30_000L
         monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
+        isEmergencyAlarmActive = false
         stopEmergencyBeep()
         BleAlertService.cancelEmergency(this)
-        // 학습 안 함 — 센서 오류/일시적이라 베이스라인에 반영하지 않음
+        // 학습 안 함
     }
 
     // ════════════════════════════════════════

@@ -182,6 +182,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 오작동 멈추기 → 워치에 DISMISS 전달
+        findViewById<Button>(R.id.btnPhoneDismiss).setOnClickListener {
+            dismissEmergency()
+            val nodeId = watchNodeId
+            if (nodeId != null) {
+                Wearable.getMessageClient(this)
+                    .sendMessage(nodeId, "/safepulse/phone_dismiss", "dismiss".toByteArray())
+            }
+        }
+
         // 119 신고
         btnCall119.setOnClickListener {
             try {

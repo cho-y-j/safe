@@ -36,7 +36,7 @@ object BleAlertService {
 
     // 거리 계산 파라미터
     private const val D_MAX = 30.0           // 최대 경보 반경 (미터)
-    private const val TX_POWER = -59          // 1m 거리 기준 RSSI (기기별 캘리브레이션 필요)
+    private const val TX_POWER = -65          // 1m 거리 기준 RSSI (Galaxy Watch 캘리브레이션)
     private const val PATH_LOSS_N = 2.5       // 환경 계수 (실내 2.0~3.0)
 
     // 상태
@@ -51,7 +51,9 @@ object BleAlertService {
     private val suppressedWorkerIds = mutableSetOf<String>()
     private val suppressedTimestamps = mutableMapOf<String, Long>()
     private var activeVibrator: Vibrator? = null
-    private val activeEmergencyWorkers = mutableMapOf<String, Long>()  // workerId → 마지막 진동 시작 시각
+    private val activeEmergencyWorkers = mutableMapOf<String, Long>()
+    private var currentZone = ""           // 현재 거리 구간 (실시간 추적)
+    private var alertActivityLaunched = false  // P2pAlertActivity 실행 여부
 
     // ════════════════════════════════════════
     // 광고 (Advertise) — 내 상태를 주변에 알림
@@ -138,6 +140,8 @@ object BleAlertService {
         suppressedTimestamps[workerId] = System.currentTimeMillis()
         activeEmergencyWorkers.remove(workerId)
         activeVibrator?.cancel()
+        currentZone = ""
+        alertActivityLaunched = false
         Log.d(TAG, "Dismissed received alert from $workerId")
     }
 
@@ -258,27 +262,6 @@ object BleAlertService {
                 else -> "ZONE5"                              // 10m+ 멀리
             }
 
-            // 중복 알림 방지: 같은 작업자 30초 이내 재수신이면 스킵
-            val lastVibTime = activeEmergencyWorkers[workerId] ?: 0L
-            val shouldVibrate = now - lastVibTime > 30000
-
-            if (shouldVibrate) {
-                activeEmergencyWorkers[workerId] = now
-                Log.w(TAG, "🚨 EMERGENCY from $workerId | RSSI=$rssi, dist=${"%.1f".format(distance)}m, zone=$zone")
-                vibrateByDistance(context, alertIntensity, zone)
-                // 긴급 비프음 (수신 측: 삐-삐-삐)
-                try {
-                    val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
-                    for (i in 0 until 3) {
-                        android.os.Handler(context.mainLooper).postDelayed({
-                            try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200) } catch (_: Exception) {}
-                        }, (i * 400).toLong())
-                    }
-                    android.os.Handler(context.mainLooper).postDelayed({ try { toneGen.release() } catch (_: Exception) {} }, 1400)
-                } catch (_: Exception) {}
-            }
-
-            // fullScreenIntent로 P2pAlertActivity 실행 (BAL_BLOCK 우회)
             val appCtx = context.applicationContext
             val prefs = appCtx.getSharedPreferences("safepulse", Context.MODE_PRIVATE)
             val registry = prefs.getString("workerRegistry", "") ?: ""
@@ -286,40 +269,65 @@ object BleAlertService {
                 .mapNotNull { e -> val p = e.split(":"); if (p.size == 2 && p[0].trim() == workerId) p[1].trim() else null }
                 .firstOrNull() ?: workerId
 
-            try {
-                val alertIntent = Intent(appCtx, com.dainon.safepulse.ui.P2pAlertActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    putExtra("workerId", workerId)
-                    putExtra("workerName", workerName)
-                    putExtra("distance", distance)
-                    putExtra("zone", zone)
+            Log.d(TAG, "📡 BLE from $workerId: RSSI=$rssi, dist=${"%.1f".format(distance)}m, zone=$zone")
+
+            // 1) 거리 브로드캐스트 (매 수신마다) — P2pAlertActivity가 실시간 갱신
+            appCtx.sendBroadcast(Intent("com.dainon.safepulse.P2P_DISTANCE").apply {
+                setPackage("com.dainon.safepulse")
+                putExtra("distance", distance)
+                putExtra("zone", zone)
+                putExtra("workerId", workerId)
+            })
+
+            // 2) zone 변경 시 진동+비프 패턴 즉시 교체
+            if (zone != currentZone) {
+                currentZone = zone
+                activeEmergencyWorkers[workerId] = now
+                Log.w(TAG, "🚨 Zone changed: $zone (${"%.1f".format(distance)}m) — vibration pattern update")
+                vibrateByDistance(context, alertIntensity, zone)
+            }
+
+            // 3) P2pAlertActivity 첫 1회만 실행 (이후 브로드캐스트로 거리 갱신)
+            if (!alertActivityLaunched) {
+                alertActivityLaunched = true
+                activeEmergencyWorkers[workerId] = now
+                vibrateByDistance(context, alertIntensity, zone)
+                try {
+                    val alertIntent = Intent(appCtx, com.dainon.safepulse.ui.P2pAlertActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        putExtra("workerId", workerId)
+                        putExtra("workerName", workerName)
+                        putExtra("distance", distance)
+                        putExtra("zone", zone)
+                    }
+                    val pi = android.app.PendingIntent.getActivity(
+                        appCtx, 0, alertIntent,
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                    )
+                    val notification = androidx.core.app.NotificationCompat.Builder(appCtx, "safepulse_alert")
+                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                        .setContentTitle("주변 긴급")
+                        .setContentText("$workerName ${"%.1f".format(distance)}m")
+                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
+                        .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ALARM)
+                        .setFullScreenIntent(pi, true)
+                        .setAutoCancel(true)
+                        .setTimeoutAfter(1000)
+                        .build()
+                    val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                    nm.notify(999, notification)
+                } catch (e: Exception) {
+                    Log.e(TAG, "P2P alert failed: ${e.message}")
                 }
-                val pi = android.app.PendingIntent.getActivity(
-                    appCtx, 0, alertIntent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-
-                val notification = androidx.core.app.NotificationCompat.Builder(appCtx, "safepulse_alert")
-                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                    .setContentTitle("주변 긴급")
-                    .setContentText("$workerName ${"%.0f".format(distance)}m")
-                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
-                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ALARM)
-                    .setFullScreenIntent(pi, true)
-                    .setAutoCancel(true)
-                    .setTimeoutAfter(1000)
-                    .build()
-
-                val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                nm.notify(999, notification)
-            } catch (e: Exception) {
-                Log.e(TAG, "P2P alert failed: ${e.message}")
             }
         } else if (status == 'N') {
             // 정상으로 복귀 → 진동 취소 + suppress 해제
             if (workerId in activeEmergencyWorkers) {
                 activeVibrator?.cancel()
                 activeEmergencyWorkers.remove(workerId)
+                currentZone = ""
+                alertActivityLaunched = false
+                stopBeep()
                 Log.d(TAG, "Worker $workerId back to normal → vibration cancelled")
             }
             suppressedWorkerIds.remove(workerId)

@@ -51,8 +51,7 @@
             android:launchMode="singleTop"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
-            android:excludeFromRecents="true"
-            android:taskAffinity="" />
+            android:excludeFromRecents="true" />
 
         <activity
             android:name=".ui.P2pAlertActivity"
