@@ -137,6 +137,7 @@ class SensorService : Service(), SensorEventListener {
     private val EMERGENCY_ESCALATION_SEC = 90
     private var ackCooldownUntil = 0L       // ACK 후 재에스컬레이션 방지 (30초)
     private var isEmergencyAlarmActive = false  // 발신자 비프/진동 1회만
+    private var emergencyVibrator: Vibrator? = null  // 진동 cancel용
 
     // ──── GPS 위치 ────
     private var latitude = 37.4602
@@ -754,6 +755,9 @@ class SensorService : Service(), SensorEventListener {
     private fun evaluateState() {
         if (!baselineReady || heartRate <= 0) return
 
+        // P2P 수신 중 (주변에 사고자가 있을 때) 본인 이상 감지 보류
+        if (BleAlertService.isReceivingEmergency() && currentState == WorkerState.NORMAL) return
+
         val now = System.currentTimeMillis()
 
         when (currentState) {
@@ -854,10 +858,12 @@ class SensorService : Service(), SensorEventListener {
             }
 
             WorkerState.ACKNOWLEDGED -> {
-                // 확인 눌렀지만 추적 감시
                 monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_NEAR)
 
-                // 절대 상한 또는 SpO₂ 심각 → 재알림
+                // ★ 쿨다운 중이면 재에스컬레이션 완전 차단
+                if (now < ackCooldownUntil) return
+
+                // 절대 상한만 재알림 (쿨다운 끝난 후에만)
                 if (heartRate >= ABSOLUTE_MAX_HR || heartRate in 1 until ABSOLUTE_MIN_HR || (spo2 in 1..90)) {
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
@@ -1000,8 +1006,9 @@ class SensorService : Service(), SensorEventListener {
             Log.d(TAG, "📈 User confirmed temp=$bodyTemp as normal")
         }
 
-        // 연속 비프 정지 + P2P 경보 해제
+        // 진동 + 비프 즉시 정지 + P2P 경보 해제
         isEmergencyAlarmActive = false
+        emergencyVibrator?.cancel()
         stopEmergencyBeep()
         BleAlertService.cancelEmergency(this)
     }
@@ -1036,6 +1043,7 @@ class SensorService : Service(), SensorEventListener {
         ackCooldownUntil = System.currentTimeMillis() + 30_000L
         monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
         isEmergencyAlarmActive = false
+        emergencyVibrator?.cancel()
         stopEmergencyBeep()
         BleAlertService.cancelEmergency(this)
         // 학습 안 함
@@ -1091,6 +1099,7 @@ class SensorService : Service(), SensorEventListener {
         } else {
             @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
         }
+        emergencyVibrator = vibrator  // cancel용 저장
         // 강한 연속 진동
         vibrator.vibrate(VibrationEffect.createWaveform(
             longArrayOf(0, 500, 200, 500, 200, 500), 0  // 무한 반복

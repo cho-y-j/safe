@@ -437,6 +437,9 @@ object BleAlertService {
         beepRunnable = null
     }
 
+    /** P2P 수신 중인지 확인 */
+    fun isReceivingEmergency(): Boolean = activeEmergencyWorkers.isNotEmpty()
+
     /** 수신 경보 해제 시 비프도 정지 */
     fun dismissReceivedAlertFull(workerId: String) {
         dismissReceivedAlert(workerId)
