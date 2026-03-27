@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     // 작업 화면
     private lateinit var tvHeartRate: TextView
     private lateinit var tvSpO2: TextView
+    private lateinit var tvBodyTemp: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvRiskLevel: TextView
     private lateinit var tvRecommendation: TextView
@@ -64,6 +65,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvAckMessage: TextView
     private lateinit var tvAckTimer: TextView
     private lateinit var btnAckOk: Button
+
+    // P2P 수신 경보 오버레이
+    private lateinit var p2pOverlay: LinearLayout
+    private lateinit var tvP2pWorkerName: TextView
+    private lateinit var tvP2pAlertType: TextView
+    private lateinit var tvP2pDistance: TextView
+    private lateinit var btnP2pRespond: Button
+    private lateinit var btnP2pCantHelp: Button
+    private var currentP2pWorkerId = ""
 
     // 작업/휴식 상태
     enum class WorkMode { IDLE, WORKING, RESTING }
@@ -100,8 +110,11 @@ class MainActivity : AppCompatActivity() {
             val baselineHr = intent.getIntExtra("baselineHr", 0)
             val stateKr = intent.getStringExtra("stateKr") ?: "정상"
 
+            val bodyTemp = intent.getDoubleExtra("bodyTemp", 0.0)
+
             tvHeartRate.text = if (hr > 0) "$hr" else "--"
             tvSpO2.text = if (spo2 > 0) "$spo2%" else "--%"
+            tvBodyTemp.text = if (bodyTemp > 30) "${"%.1f".format(bodyTemp)}°" else "--°"
             tvConnection.text = if (connected) "●" else "○"
             tvConnection.setTextColor(if (connected) 0xFF66BB6A.toInt() else 0xFFFFB74D.toInt())
 
@@ -114,9 +127,9 @@ class MainActivity : AppCompatActivity() {
             }
             tvStateLabel.setTextColor(stateColor)
 
-            // 확인 오버레이
+            // 확인 오버레이 — EMERGENCY에서도 표시 (경보 해제 가능)
             val state = intent.getStringExtra("state") ?: ""
-            if (state == "WAITING_ACK" || state == "FALL_DETECTED") {
+            if (state == "WAITING_ACK" || state == "FALL_DETECTED" || state == "EMERGENCY") {
                 showAckOverlay(state)
             } else {
                 ackOverlay.visibility = View.GONE
@@ -145,10 +158,52 @@ class MainActivity : AppCompatActivity() {
             val workerId = intent.getStringExtra("workerId") ?: "?"
             val distance = intent.getDoubleExtra("distance", 99.0)
             val intensity = intent.getIntExtra("intensity", 0)
+            val zone = intent.getStringExtra("zone") ?: "NEAR"
+            currentP2pWorkerId = workerId
+
+            // 작업자 이름 해결 (SharedPreferences workerRegistry)
+            val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+            val registry = prefs.getString("workerRegistry", "") ?: ""
+            val workerName = resolveWorkerName(workerId, registry)
+
+            // 풀스크린 P2P 오버레이 표시
+            p2pOverlay.visibility = View.VISIBLE
+
+            tvP2pWorkerName.text = workerName
+            tvP2pAlertType.text = "이상 징후 감지"
+
+            // 거리 구간별 표시 (연구 기반)
+            when (zone) {
+                "IMMEDIATE" -> {
+                    tvP2pDistance.text = "⚡ ${"%.0f".format(distance)}m 즉시근접"
+                    tvP2pDistance.setTextColor(0xFFFF1744.toInt())
+                }
+                "NEAR" -> {
+                    tvP2pDistance.text = "📍 ${"%.0f".format(distance)}m 근처"
+                    tvP2pDistance.setTextColor(0xFFFFEB3B.toInt())
+                }
+                "FAR" -> {
+                    tvP2pDistance.text = "📡 ${"%.0f".format(distance)}m 멀리"
+                    tvP2pDistance.setTextColor(0xFFBDBDBD.toInt())
+                }
+            }
+
+            // 배너에도 표시
             alertBanner.visibility = View.VISIBLE
             alertBanner.setBackgroundColor(0xFFE53935.toInt())
-            tvLastAlert.text = "🚨 $workerId 긴급! ${"%.0f".format(distance)}m"
+            tvLastAlert.text = "🚨 $workerName 긴급! ${"%.0f".format(distance)}m"
         }
+    }
+
+    /** workerId → 이름 해결 (JSON: "W-001:조영진,W-002:이서준") */
+    private fun resolveWorkerName(workerId: String, registry: String): String {
+        if (registry.isBlank()) return workerId
+        return registry.split(",")
+            .mapNotNull { entry ->
+                val parts = entry.split(":")
+                if (parts.size == 2 && parts[0].trim() == workerId) parts[1].trim() else null
+            }
+            .firstOrNull() ?: workerId
     }
 
     // ═══════════════════════════════════════
@@ -175,6 +230,7 @@ class MainActivity : AppCompatActivity() {
         // 작업
         tvHeartRate = findViewById(R.id.tvHeartRate)
         tvSpO2 = findViewById(R.id.tvSpO2)
+        tvBodyTemp = findViewById(R.id.tvBodyTemp)
         tvStatus = findViewById(R.id.tvStatus)
         tvRiskLevel = findViewById(R.id.tvRiskLevel)
         tvRecommendation = findViewById(R.id.tvRecommendation)
@@ -205,6 +261,14 @@ class MainActivity : AppCompatActivity() {
         tvAckTimer = findViewById(R.id.tvAckTimer)
         btnAckOk = findViewById(R.id.btnAckOk)
 
+        // P2P 수신 경보 오버레이
+        p2pOverlay = findViewById(R.id.p2pOverlay)
+        tvP2pWorkerName = findViewById(R.id.tvP2pWorkerName)
+        tvP2pAlertType = findViewById(R.id.tvP2pAlertType)
+        tvP2pDistance = findViewById(R.id.tvP2pDistance)
+        btnP2pRespond = findViewById(R.id.btnP2pRespond)
+        btnP2pCantHelp = findViewById(R.id.btnP2pCantHelp)
+
         // ═══ 버튼 이벤트 ═══
 
         btnWorkStart.setOnClickListener { startWork() }
@@ -219,6 +283,24 @@ class MainActivity : AppCompatActivity() {
             ackOverlay.visibility = View.GONE
             startService(Intent(this, SensorService::class.java).apply { action = SensorService.ACTION_ACKNOWLEDGE })
         }
+        findViewById<Button>(R.id.btnAckDismiss).setOnClickListener {
+            ackOverlay.visibility = View.GONE
+            startService(Intent(this, SensorService::class.java).apply { action = SensorService.ACTION_DISMISS })
+        }
+        findViewById<Button>(R.id.btnAckEmergency).setOnClickListener {
+            ackOverlay.visibility = View.GONE
+            startService(Intent(this, SensorService::class.java).apply { action = SensorService.ACTION_MANUAL_EMERGENCY })
+        }
+
+        // P2P 수신 경보 버튼
+        btnP2pRespond.setOnClickListener {
+            BleAlertService.dismissReceivedAlert(currentP2pWorkerId)
+            p2pOverlay.visibility = View.GONE
+        }
+        btnP2pCantHelp.setOnClickListener {
+            BleAlertService.dismissReceivedAlert(currentP2pWorkerId)
+            p2pOverlay.visibility = View.GONE
+        }
 
         // 이전 상태 복원
         val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
@@ -228,7 +310,15 @@ class MainActivity : AppCompatActivity() {
         totalWorkMs = prefs.getLong("totalWorkMs", 0L)
 
         when (savedWorkMode) {
-            "WORKING" -> { workMode = WorkMode.WORKING; showWorkingView() }
+            "WORKING" -> {
+                workMode = WorkMode.WORKING
+                showWorkingView()
+                // 앱 재시작 시 서비스도 복원
+                requestPermissions()  // 내부에서 startBle + startServices 호출
+                loadAIInsight()
+                startTimerLoop()
+                return  // requestPermissions 중복 방지
+            }
             "RESTING" -> { restStartTime = prefs.getLong("restStartTime", System.currentTimeMillis()); workMode = WorkMode.RESTING; showRestingView() }
             else -> showIdleView()
         }
@@ -236,6 +326,38 @@ class MainActivity : AppCompatActivity() {
         requestPermissions()
         loadAIInsight()
         startTimerLoop()
+        handleIntentExtras(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntentExtras(intent)
+    }
+
+    private fun handleIntentExtras(intent: Intent) {
+        // P2P 긴급 수신 → 오버레이 직접 표시
+        if (intent.getBooleanExtra("p2p_alert", false)) {
+            val workerId = intent.getStringExtra("workerId") ?: "?"
+            val distance = intent.getDoubleExtra("distance", 99.0)
+            val zone = intent.getStringExtra("zone") ?: "NEAR"
+            currentP2pWorkerId = workerId
+
+            val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+            val registry = prefs.getString("workerRegistry", "") ?: ""
+            val workerName = resolveWorkerName(workerId, registry)
+
+            p2pOverlay.visibility = View.VISIBLE
+            tvP2pWorkerName.text = workerName
+            when (zone) {
+                "IMMEDIATE" -> { tvP2pDistance.text = "⚡ ${"%.0f".format(distance)}m"; tvP2pDistance.setTextColor(0xFFFF1744.toInt()) }
+                "NEAR" -> { tvP2pDistance.text = "📍 ${"%.0f".format(distance)}m"; tvP2pDistance.setTextColor(0xFFFFEB3B.toInt()) }
+                "FAR" -> { tvP2pDistance.text = "📡 ${"%.0f".format(distance)}m"; tvP2pDistance.setTextColor(0xFFBDBDBD.toInt()) }
+            }
+        }
+        // 발신자 EMERGENCY → ACK 오버레이
+        if (intent.getBooleanExtra("emergency", false)) {
+            showAckOverlay("EMERGENCY")
+        }
     }
 
     // ═══════════════════════════════════════
@@ -262,14 +384,15 @@ class MainActivity : AppCompatActivity() {
         startServices()
         startBle()
 
-        // 프리셋이 있으면 학습 타이머 생략 (SensorService가 프리셋으로 시작)
+        // 프리셋이 있으면 학습 타이머 생략
         val hasPreset = prefs.getFloat("presetRestMean", 0f) > 0
         if (!isBaselineComplete && !hasPreset) {
             startLearningTimer()
-        } else if (hasPreset && !isBaselineComplete) {
-            // 프리셋 있음 → 베이스라인 카드 바로 표시 + 백그라운드 학습
+        } else if (!isBaselineComplete) {
+            // 프리셋 또는 이전 학습 데이터 있음 → 바로 완료 처리
             showBaselineComplete(prefs.getFloat("presetRestMean", 75f).toInt())
             isBaselineComplete = true
+            prefs.edit().putBoolean("baselineComplete", true).apply()
         }
     }
 
@@ -446,10 +569,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAckOverlay(state: String) {
         ackOverlay.visibility = View.VISIBLE
-        tvAckTitle.text = if (state == "FALL_DETECTED") "넘어지셨나요?" else "괜찮으세요?"
-        tvAckMessage.text = if (state == "FALL_DETECTED") "낙상 감지" else "이상 징후 감지"
-        tvAckTitle.setTextColor(if (state == "FALL_DETECTED") 0xFFE53935.toInt() else 0xFFFF9800.toInt())
-        tvAckTimer.text = "5초 후 주변 경보"
+        when (state) {
+            "FALL_DETECTED" -> {
+                tvAckTitle.text = "넘어지셨나요?"
+                tvAckMessage.text = "낙상 감지"
+                tvAckTitle.setTextColor(0xFFE53935.toInt())
+                tvAckTimer.text = "무응답 시 자동 경보"
+                btnAckOk.text = "✅ 괜찮아요"
+            }
+            "EMERGENCY" -> {
+                tvAckTitle.text = "긴급 상황"
+                tvAckMessage.text = "주변에 경보 전파 중"
+                tvAckTitle.setTextColor(0xFFE53935.toInt())
+                tvAckTimer.text = "괜찮으시면 해제하세요"
+                btnAckOk.text = "✅ 괜찮아요 (경보 해제)"
+            }
+            else -> {
+                tvAckTitle.text = "괜찮으세요?"
+                tvAckMessage.text = "이상 징후 감지"
+                tvAckTitle.setTextColor(0xFFFF9800.toInt())
+                tvAckTimer.text = "무응답 5분 시 자동 경보"
+                btnAckOk.text = "✅ 괜찮아요"
+            }
+        }
     }
 
     // ═══════════════════════════════════════
@@ -467,9 +609,10 @@ class MainActivity : AppCompatActivity() {
         if (needed.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toTypedArray(), 100)
         } else {
-            // 권한 있으면 항상 BLE 시작 (폰이 워치를 찾을 수 있게)
+            // 권한 있으면 항상 BLE 시작
             startBle()
-            if (workMode == WorkMode.WORKING) startServices()
+            // WORKING/RESTING이면 서비스도 시작
+            if (workMode == WorkMode.WORKING || workMode == WorkMode.RESTING) startServices()
         }
     }
 
@@ -487,8 +630,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startBle() {
-        BleAlertService.startNormalAdvertise(this, SensorService.WORKER_ID)
+        // SharedPreferences에서 workerId 로드 (SensorService 미시작 시에도 정확한 ID 사용)
+        val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
+        val workerId = prefs.getString("workerId", "W-001") ?: "W-001"
+        SensorService.WORKER_ID = workerId
+        BleAlertService.startNormalAdvertise(this, workerId)
         BleAlertService.startScanning(this)
+        android.util.Log.d("MainActivity", "BLE started: advertise=$workerId, scanning=true")
     }
 
     private fun loadAIInsight() {
@@ -522,7 +670,7 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         try { unregisterReceiver(sensorReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(alertReceiver) } catch (_: Exception) {}
-        try { unregisterReceiver(p2pReceiver) } catch (_: Exception) {}
+        // p2pReceiver는 해제하지 않음 (화면 꺼져도 수신)
     }
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }

@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.dainon.safepulse.R
 import com.dainon.safepulse.phone.service.BridgeService
+import com.dainon.safepulse.phone.ui.EmergencyMapActivity
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
@@ -30,36 +31,77 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvAlerts: TextView
     private lateinit var etServerUrl: EditText
 
+    // 실시간 바이탈
+    private lateinit var tvPhoneHR: TextView
+    private lateinit var tvPhoneSpO2: TextView
+    private lateinit var tvPhoneTemp: TextView
+    private lateinit var tvPhoneStress: TextView
+    private lateinit var tvPhoneBaseline: TextView
+
+    // 긴급 카드
+    private lateinit var emergencyCard: LinearLayout
+    private lateinit var tvEmergencyHR: TextView
+    private lateinit var tvEmergencySpO2: TextView
+    private lateinit var tvEmergencyState: TextView
+    private lateinit var tvEmergencyElapsed: TextView
+    private lateinit var btnPhoneAck: Button
+    private lateinit var btnCall119: Button
+    private var emergencyStartTime = 0L
+    private var isEmergencyActive = false
+    private var watchNodeId: String? = null
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val client = OkHttpClient()
     private val gson = Gson()
 
+    // BLE watchReceiver — 사용 안 함
     private val watchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {}
+    }
+
+    // 수신자용: P2P 긴급 수신 (BridgeService에서 발송)
+    private val p2pReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            val workerId = intent.getStringExtra("workerId") ?: "--"
-            val status = intent.getStringExtra("status") ?: "N"
-            val rssi = intent.getIntExtra("rssi", 0)
+            val emergencyWorkerId = intent.getStringExtra("workerId") ?: "?"
+            // P2P 카드 표시
+            findViewById<LinearLayout>(R.id.p2pCard).visibility = View.VISIBLE
+            findViewById<TextView>(R.id.tvP2pTitle).text = "🚨 주변 긴급! $emergencyWorkerId"
 
-            tvConnectionStatus.text = "● 워치 연결됨"
-            tvConnectionStatus.setTextColor(0xFF43A047.toInt())
-            tvWorkerId.text = workerId
-
-            if (status == "E") {
-                tvWatchStatus.text = "긴급!"
-                tvWatchStatus.setTextColor(0xFFE53935.toInt())
-                btnAck.visibility = View.VISIBLE // 확인 버튼 표시
-            } else {
-                tvWatchStatus.text = "정상"
-                tvWatchStatus.setTextColor(0xFF43A047.toInt())
-                btnAck.visibility = View.GONE
+            // 위치 보기 버튼
+            findViewById<Button>(R.id.btnP2pMap).setOnClickListener {
+                val prefs = getSharedPreferences("safepulse_companion", MODE_PRIVATE)
+                val url = prefs.getString("serverUrl", "http://192.168.0.9:4000") ?: return@setOnClickListener
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val resp = client.newCall(okhttp3.Request.Builder().url("$url/api/workers/$emergencyWorkerId").build()).execute()
+                        if (resp.isSuccessful) {
+                            val body = resp.body?.string() ?: return@launch
+                            val data = gson.fromJson(body, Map::class.java) as? Map<String, Any> ?: return@launch
+                            val worker = data["worker"] as? Map<String, Any>
+                            val history = data["sensorHistory"] as? List<Map<String, Any>>
+                            val latest = history?.firstOrNull()
+                            val lat = (latest?.get("latitude") as? Number)?.toDouble() ?: 37.4602
+                            val lng = (latest?.get("longitude") as? Number)?.toDouble() ?: 126.4407
+                            val name = worker?.get("name")?.toString() ?: emergencyWorkerId
+                            withContext(Dispatchers.Main) {
+                                startActivity(Intent(this@MainActivity, EmergencyMapActivity::class.java).apply {
+                                    putExtra("workerId", emergencyWorkerId)
+                                    putExtra("workerName", name)
+                                    putExtra("lat", lat)
+                                    putExtra("lng", lng)
+                                })
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
             }
 
-            val signalStr = when {
-                rssi > -50 -> "강함"
-                rssi > -70 -> "보통"
-                else -> "약함"
+            // 확인 (알림 종료) 버튼
+            findViewById<Button>(R.id.btnP2pDismiss).setOnClickListener {
+                findViewById<LinearLayout>(R.id.p2pCard).visibility = View.GONE
+                // 진동 멈추기
+                BridgeService.activeVibrator?.cancel()
             }
-            tvSignal.text = signalStr
         }
     }
 
@@ -91,15 +133,43 @@ class MainActivity : AppCompatActivity() {
         tvAlerts = findViewById(R.id.tvAlerts)
         etServerUrl = findViewById(R.id.etServerUrl)
 
+        // 실시간 바이탈
+        tvPhoneHR = findViewById(R.id.tvPhoneHR)
+        tvPhoneSpO2 = findViewById(R.id.tvPhoneSpO2)
+        tvPhoneTemp = findViewById(R.id.tvPhoneTemp)
+        tvPhoneStress = findViewById(R.id.tvPhoneStress)
+        tvPhoneBaseline = findViewById(R.id.tvPhoneBaseline)
+
+        // 긴급 카드
+        emergencyCard = findViewById(R.id.emergencyCard)
+        tvEmergencyHR = findViewById(R.id.tvEmergencyHR)
+        tvEmergencySpO2 = findViewById(R.id.tvEmergencySpO2)
+        tvEmergencyState = findViewById(R.id.tvEmergencyState)
+        tvEmergencyElapsed = findViewById(R.id.tvEmergencyElapsed)
+        btnPhoneAck = findViewById(R.id.btnPhoneAck)
+        btnCall119 = findViewById(R.id.btnCall119)
+
         val prefs = getSharedPreferences("safepulse_companion", MODE_PRIVATE)
         etServerUrl.setText(prefs.getString("serverUrl", "http://192.168.0.10:4000"))
 
-        // 확인 버튼 — 워치의 경보 해제
-        btnAck.setOnClickListener {
-            btnAck.visibility = View.GONE
-            tvWatchStatus.text = "확인됨"
-            tvWatchStatus.setTextColor(0xFF43A047.toInt())
-            // 서버에 확인 전송
+        // 워치 노드 ID 조회 (ACK 전송용)
+        try {
+            Wearable.getNodeClient(this).connectedNodes
+                .addOnSuccessListener { nodes -> watchNodeId = nodes.firstOrNull()?.id }
+        } catch (_: Exception) {}
+
+        // ═══ 문제 없음 (경보 해제) — 워치에 직접 ACK 전송 ═══
+        btnPhoneAck.setOnClickListener {
+            dismissEmergency()
+            // 워치에 ACK 전송 (Wearable Data Layer)
+            val nodeId = watchNodeId
+            if (nodeId != null) {
+                Wearable.getMessageClient(this)
+                    .sendMessage(nodeId, "/safepulse/phone_ack", "ack".toByteArray())
+                    .addOnSuccessListener { android.util.Log.d("PhoneAck", "ACK sent to watch") }
+                    .addOnFailureListener { android.util.Log.e("PhoneAck", "ACK failed: ${it.message}") }
+            }
+            // 서버에도 ACK 전송
             scope.launch(Dispatchers.IO) {
                 try {
                     val url = prefs.getString("serverUrl", "http://192.168.0.10:4000") ?: return@launch
@@ -111,6 +181,23 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) {}
             }
         }
+
+        // 119 신고
+        btnCall119.setOnClickListener {
+            try {
+                startActivity(Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:119")))
+            } catch (_: Exception) {}
+        }
+
+        // 레거시 확인 버튼
+        btnAck.setOnClickListener {
+            btnAck.visibility = View.GONE
+            tvWatchStatus.text = "확인됨"
+            tvWatchStatus.setTextColor(0xFF43A047.toInt())
+        }
+
+        // 긴급 경과 시간 타이머
+        startEmergencyTimer()
 
         // 내 건강 리포트
         findViewById<Button>(R.id.btnHealth).setOnClickListener {
@@ -126,6 +213,7 @@ class MainActivity : AppCompatActivity() {
         requestPermissions()
         // 워치 메시지 직접 수신 (MessageClient)
         startWatchListener()
+        handleP2pIntent(intent)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -170,8 +258,15 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         tvConnectionStatus.text = "● 워치 연결됨"
                         tvConnectionStatus.setTextColor(0xFF43A047.toInt())
-                        tvWorkerId.text = map["workerId"]?.toString() ?: "--"
+                        val receivedWorkerId = map["workerId"]?.toString() ?: "--"
+                        tvWorkerId.text = receivedWorkerId
+                        // 내 워치 ID 저장 (BridgeService에서 발신자/수신자 구분용)
+                        if (receivedWorkerId != "--") {
+                            getSharedPreferences("safepulse_companion", MODE_PRIVATE).edit()
+                                .putString("workerId", receivedWorkerId).apply()
+                        }
                         val stateKr = map["stateKr"]?.toString() ?: "정상"
+                        val state = map["state"]?.toString() ?: "NORMAL"
                         tvWatchStatus.text = stateKr
                         tvWatchStatus.setTextColor(
                             if (stateKr.contains("응급") || stateKr.contains("위험")) 0xFFE53935.toInt()
@@ -179,7 +274,26 @@ class MainActivity : AppCompatActivity() {
                             else 0xFF43A047.toInt()
                         )
                         val hr = (map["heartRate"] as? Number)?.toInt() ?: 0
-                        tvSignal.text = if (hr > 0) "💓$hr" else "--"
+                        val spo2 = (map["spo2"] as? Number)?.toInt() ?: 0
+                        val bodyTemp = (map["bodyTemp"] as? Number)?.toDouble() ?: 0.0
+                        val stress = (map["stress"] as? Number)?.toInt() ?: 0
+                        val restHrMean = (map["restHrMean"] as? Number)?.toInt() ?: 0
+                        val activeHrMean = (map["activeHrMean"] as? Number)?.toInt() ?: 0
+
+                        // 6칸 바이탈 업데이트
+                        tvPhoneHR.text = if (hr > 0) "$hr" else "--"
+                        tvPhoneSpO2.text = if (spo2 > 0) "$spo2%" else "--%"
+                        tvPhoneTemp.text = if (bodyTemp > 30) "${"%.1f".format(bodyTemp)}°" else "--°"
+                        tvPhoneStress.text = if (stress > 0) "$stress" else "--"
+                        tvPhoneBaseline.text = if (restHrMean > 0) "$restHrMean" else "--"
+                        tvSignal.text = if (activeHrMean > 0) "$activeHrMean" else "--"
+
+                        // 긴급 카드 업데이트
+                        if (state == "EMERGENCY" || state == "WAITING_ACK" || state == "FALL_DETECTED") {
+                            showEmergency(hr, spo2, stateKr)
+                        } else if (state == "NORMAL" || state == "ACKNOWLEDGED") {
+                            dismissEmergency()
+                        }
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("WatchMsg", "Parse error: ${e.message}")
@@ -187,9 +301,7 @@ class MainActivity : AppCompatActivity() {
             }
             event.path.startsWith("/safepulse/alert") -> {
                 runOnUiThread {
-                    btnAck.visibility = View.VISIBLE
-                    tvWatchStatus.text = "🚨 긴급"
-                    tvWatchStatus.setTextColor(0xFFE53935.toInt())
+                    showEmergency(0, 0, "긴급")
                 }
             }
         }
@@ -210,16 +322,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleP2pIntent(intent)
+    }
+
+    private fun handleP2pIntent(intent: Intent) {
+        if (intent.getBooleanExtra("p2p_emergency", false)) {
+            val emergencyWorkerId = intent.getStringExtra("workerId") ?: "?"
+            findViewById<LinearLayout>(R.id.p2pCard).visibility = View.VISIBLE
+            findViewById<TextView>(R.id.tvP2pTitle).text = "🚨 주변 긴급! $emergencyWorkerId"
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         registerReceiver(watchReceiver, IntentFilter("com.dainon.safepulse.companion.WATCH_UPDATE"), RECEIVER_NOT_EXPORTED)
         registerReceiver(alertsReceiver, IntentFilter("com.dainon.safepulse.companion.ALERTS_UPDATE"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(p2pReceiver, IntentFilter("com.dainon.safepulse.companion.P2P_EMERGENCY"), RECEIVER_NOT_EXPORTED)
     }
 
     override fun onPause() {
         super.onPause()
         unregisterReceiver(watchReceiver)
         unregisterReceiver(alertsReceiver)
+        try { unregisterReceiver(p2pReceiver) } catch (_: Exception) {}
+    }
+
+    // ═══ 긴급 카드 제어 ═══
+
+    private fun showEmergency(hr: Int, spo2: Int, stateKr: String) {
+        if (!isEmergencyActive) {
+            isEmergencyActive = true
+            emergencyStartTime = System.currentTimeMillis()
+        }
+        emergencyCard.visibility = View.VISIBLE
+        btnAck.visibility = View.GONE  // 레거시 버튼 숨김
+        if (hr > 0) tvEmergencyHR.text = "$hr"
+        if (spo2 > 0) tvEmergencySpO2.text = "$spo2%"
+        tvEmergencyState.text = stateKr
+    }
+
+    private fun dismissEmergency() {
+        isEmergencyActive = false
+        emergencyCard.visibility = View.GONE
+        btnAck.visibility = View.GONE
+        tvWatchStatus.text = "확인됨"
+        tvWatchStatus.setTextColor(0xFF43A047.toInt())
+    }
+
+    private fun startEmergencyTimer() {
+        scope.launch {
+            while (isActive) {
+                delay(1000)
+                if (isEmergencyActive && emergencyStartTime > 0) {
+                    val elapsed = (System.currentTimeMillis() - emergencyStartTime) / 1000
+                    tvEmergencyElapsed.text = "${elapsed}��"
+                }
+            }
+        }
     }
 
     override fun onDestroy() {

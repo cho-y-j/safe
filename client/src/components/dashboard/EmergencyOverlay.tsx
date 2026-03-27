@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Box, Typography, Chip, Button, Grid, LinearProgress } from '@mui/material';
 import type { WorkerData } from '../../types';
 
@@ -5,11 +6,42 @@ interface Props {
   workers: WorkerData[];      // 위험 상태 작업자들
   allWorkers: WorkerData[];   // 전체 작업자 (주변 동료 찾기용)
   onClose: () => void;
+  onViewMap?: (workerId: string) => void;
 }
 
-export default function EmergencyOverlay({ workers, allWorkers, onClose }: Props) {
+export default function EmergencyOverlay({ workers, allWorkers, onClose, onViewMap }: Props) {
   const target = workers[0]; // 첫 번째 위험 작업자
+  const [elapsed, setElapsed] = useState(0);
+  const [responders, setResponders] = useState<{ name: string; time: string }[]>([]);
+
+  // 경과 시간 타이머
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // P2P 응답 수신 (Socket.io)
+  useEffect(() => {
+    const handleRespond = (data: { responderId: string; action: string; timestamp: string }) => {
+      if (data.action === 'responding') {
+        const worker = allWorkers.find((w) => w.id === data.responderId);
+        setResponders((prev) => [
+          ...prev,
+          { name: worker?.name || data.responderId, time: new Date(data.timestamp).toLocaleTimeString() },
+        ]);
+      }
+    };
+    // @ts-ignore - socket is available globally
+    const socket = (window as any).__safepulse_socket;
+    if (socket) {
+      socket.on('emergency:respond', handleRespond);
+      return () => { socket.off('emergency:respond', handleRespond); };
+    }
+  }, [allWorkers]);
+
   if (!target) return null;
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
 
   // 가장 가까운 동료 (같은 구역 우선, 그 다음 다른 구역)
   const nearbyWorkers = allWorkers
@@ -36,12 +68,20 @@ export default function EmergencyOverlay({ workers, allWorkers, onClose }: Props
             긴급 상황 발생
           </Typography>
           <Typography sx={{ fontSize: 14, color: '#FFCDD2' }}>
-            P2P BLE 경보 발동 | 관제센터 자동 통보 완료
+            P2P BLE 경보 발동 | 경과 {mins}:{secs.toString().padStart(2, '0')}
+            {responders.length > 0 && ` | ${responders.length}명 응답`}
           </Typography>
         </Box>
-        <Button variant="outlined" onClick={onClose} sx={{ color: '#7A8FA3', borderColor: '#1E3044' }}>
-          경보 해제
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {onViewMap && (
+            <Button variant="contained" onClick={() => onViewMap(target.id)} sx={{ background: '#2E75B6' }}>
+              🗺 지도에서 보기
+            </Button>
+          )}
+          <Button variant="outlined" onClick={onClose} sx={{ color: '#7A8FA3', borderColor: '#1E3044' }}>
+            경보 해제
+          </Button>
+        </Box>
       </Box>
 
       <Grid container spacing={2}>
@@ -111,6 +151,20 @@ export default function EmergencyOverlay({ workers, allWorkers, onClose }: Props
               );
             })}
           </Box>
+
+          {/* P2P 응답 현황 */}
+          {responders.length > 0 && (
+            <Box sx={{ p: 1.5, background: 'rgba(67,160,71,0.08)', borderRadius: 2, border: '1px solid rgba(67,160,71,0.3)', mb: 2 }}>
+              <Typography sx={{ fontSize: 11, color: '#66BB6A', fontWeight: 600, mb: 0.5 }}>
+                응답한 동료 ({responders.length}명)
+              </Typography>
+              {responders.map((r, i) => (
+                <Typography key={i} sx={{ fontSize: 11, color: '#E0E6ED' }}>
+                  ✅ {r.name} — {r.time}
+                </Typography>
+              ))}
+            </Box>
+          )}
 
           {/* AED + 119 */}
           <Box sx={{ display: 'flex', gap: 2 }}>

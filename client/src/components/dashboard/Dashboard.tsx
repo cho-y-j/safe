@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Box, Card, CardContent, Typography, Grid, Chip, LinearProgress, Dialog } from '@mui/material';
 import { useDashboardStore } from '../../stores/dashboardStore';
 import { useWorkerStore } from '../../stores/workerStore';
@@ -13,6 +14,7 @@ import WorkforceTable from './WorkforceTable';
 const riskColorMap: Record<string, string> = { '안전': '#43A047', '주의': '#1E88E5', '경고': '#FF9800', '위험': '#E53935' };
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { airQuality, weather, flights, riskAnalysis } = useDashboardStore();
   const workers = useWorkerStore((s) => s.workers);
   const events = useAlertStore((s) => s.events);
@@ -27,6 +29,12 @@ export default function Dashboard() {
   useEffect(() => {
     if (dangerWorkers.length > 0) setShowEmergency(true);
   }, [dangerWorkers.length]);
+
+  // emergency 이벤트(서버 직접)로도 팝업 트리거
+  const dangerEvents = events.filter((e) => e.level === 'danger');
+  useEffect(() => {
+    if (dangerEvents.length > 0) setShowEmergency(true);
+  }, [dangerEvents.length]);
 
   const score = riskAnalysis?.totalScore ?? 0;
   const level = riskAnalysis?.level ?? '안전';
@@ -276,7 +284,7 @@ export default function Dashboard() {
       <Dialog open={showEmergency && dangerWorkers.length > 0} onClose={() => setShowEmergency(false)}
         maxWidth="lg" fullWidth
         PaperProps={{ sx: { background: '#0A1118', border: '2px solid #E53935', borderRadius: 3, maxHeight: '85vh' } }}>
-        <EmergencyOverlay workers={dangerWorkers} allWorkers={workers} onClose={() => setShowEmergency(false)} />
+        <EmergencyOverlay workers={dangerWorkers} allWorkers={workers} onClose={() => setShowEmergency(false)} onViewMap={(id) => { useWorkerStore.getState().selectWorker(id); setShowEmergency(false); navigate('/map'); }} />
       </Dialog>
     </Box>
   );

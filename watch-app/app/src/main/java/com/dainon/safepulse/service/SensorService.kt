@@ -44,6 +44,8 @@ class SensorService : Service(), SensorEventListener {
 
         // 확인 버튼 액션
         const val ACTION_ACKNOWLEDGE = "com.dainon.safepulse.ACKNOWLEDGE"
+        const val ACTION_MANUAL_EMERGENCY = "com.dainon.safepulse.MANUAL_EMERGENCY"
+        const val ACTION_DISMISS = "com.dainon.safepulse.DISMISS"  // 오작동 종료 (학습 안 함)
     }
 
     private lateinit var sensorManager: SensorManager
@@ -69,12 +71,23 @@ class SensorService : Service(), SensorEventListener {
     private var totalSamples = 0
     private val BASELINE_MIN_SAMPLES = 24  // 최소 24개 (30초 간격 = 2분이면 충분)
 
+    // SpO₂ 베이스라인 (개인화 학습)
+    private val spo2History = mutableListOf<Int>()
+    private var spo2Mean = 98.0
+    private var spo2Std = 1.5
+
+    // 체온 베이스라인 (개인화 학습)
+    private val tempHistory = mutableListOf<Double>()
+    // baselineTempMean, baselineTempStd는 위에 선언됨 → 학습으로 업데이트
+
     // 직업별 경보 범위 (연구 기반: NIOSH HRR%, PMC 건설 노동자 실측)
     // "괜찮아요" 피드백으로 개인화됨
-    private var alertRangeUpper = 55     // 안정 + 이 값 초과 시 경보 (기본: 경량작업)
-    private var alertRangeLower = 30     // 안정 - 이 값 미만 시 경보
-    private val ABSOLUTE_MAX_HR = 180    // 절대 상한 (직업 무관)
-    private val ABSOLUTE_MIN_HR = 40     // 절대 하한 (서맥)
+    private var alertRangeUpper = 55     // HR: 안정 + 이 값 초과 시 경보
+    private var alertRangeLower = 30     // HR: 안정 - 이 값 미만 시 경보
+    private var alertSpo2Range = 4.0     // SpO₂: 평균 - 이 값 미만 시 경보
+    private var alertTempRange = 0.8     // 체온: 평균 ± 이 값 초과 시 경보
+    private val ABSOLUTE_MAX_HR = 180
+    private val ABSOLUTE_MIN_HR = 40
 
     // 활동 판정 기준
     private val ACTIVITY_THRESHOLD = 1.5f
@@ -117,9 +130,11 @@ class SensorService : Service(), SensorEventListener {
     private var lastMovementTime = 0L
     private var noMovementSeconds = 0
 
-    private val ACK_TIMEOUT_SEC = 5        // P2P 전 확인 대기: 5초!
+    // TODO: 실전 배포 시 300(5분)으로 변경
+    private val ACK_TIMEOUT_SEC = 5         // 테스트용 5초 (실전: 300초=5분)
     private val SLEEP_VS_EMERGENCY_SEC = 30
     private val EMERGENCY_ESCALATION_SEC = 90
+    private var ackCooldownUntil = 0L       // ACK 후 재에스컬레이션 방지 (30초)
 
     // ──── GPS 위치 ────
     private var latitude = 37.4602
@@ -173,11 +188,13 @@ class SensorService : Service(), SensorEventListener {
         // 작업 유형별 경보 범위 설정 (연구 기반)
         val workType = prefs.getString("workType", "light") ?: "light"
         alertRangeUpper = when (workType) {
-            "office"  -> 40   // 사무직: 안정+40 (HRR 20~39%)
-            "light"   -> 55   // 경량: 안정+55 (HRR 33~50%)
-            "heavy"   -> 65   // 중량: 안정+65 (HRR 40~60%)
-            "outdoor" -> 80   // 야외: 안정+80 (HRR 50~70%)
-            else -> 55
+            "office"  -> 40; "light" -> 55; "heavy" -> 65; "outdoor" -> 80; else -> 55
+        }
+        alertSpo2Range = when (workType) {
+            "office" -> 3.0; "light" -> 4.0; "heavy" -> 5.0; "outdoor" -> 6.0; else -> 4.0
+        }
+        alertTempRange = when (workType) {
+            "office" -> 0.5; "light" -> 0.8; "heavy" -> 1.0; "outdoor" -> 1.5; else -> 0.8
         }
 
         // 프리셋 초기값
@@ -186,13 +203,20 @@ class SensorService : Service(), SensorEventListener {
         restHrMean = presetRestMean
         activeHrMean = presetActiveMean
 
-        // 로컬 저장값이 있으면 덮어쓰기
+        // 로컬 저장값이 있으면 덮어쓰기 (전체 베이스라인 복원)
         val savedHR = prefs.getInt("baselineHR", 0)
         if (prefs.getBoolean("baselineComplete", false) && savedHR > 0) {
             restHrMean = savedHR.toDouble()
+            restHrStd = prefs.getFloat("restHrStd", 8f).toDouble()
+            activeHrMean = prefs.getFloat("activeHrMean", presetActiveMean.toFloat()).toDouble()
+            activeHrStd = prefs.getFloat("activeHrStd", 12f).toDouble()
+            spo2Mean = prefs.getFloat("spo2Mean", 98f).toDouble()
+            spo2Std = prefs.getFloat("spo2Std", 1.5f).toDouble()
+            baselineTempMean = prefs.getFloat("baselineTempMean", 36.5f).toDouble()
+            baselineTempStd = prefs.getFloat("baselineTempStd", 0.3f).toDouble()
             baselineReady = true
             lastBaselineHR = savedHR
-            Log.d(TAG, "📂 Baseline from local: restHR=$savedHR, preset: rest=${presetRestMean.toInt()}, active=${presetActiveMean.toInt()}")
+            Log.d(TAG, "📂 Baseline restored: HR=$savedHR±${restHrStd.toInt()}, active=${activeHrMean.toInt()}, SpO₂=${spo2Mean.toInt()}, temp=${"%.1f".format(baselineTempMean)}")
         } else {
             // 프리셋으로 시작 — 첫날에도 어느 정도 합리적인 기준
             baselineReady = true
@@ -229,6 +253,45 @@ class SensorService : Service(), SensorEventListener {
         startGPS()
         lastMovementTime = System.currentTimeMillis()
         startMonitoringLoop()
+
+        // 폰에서 ACK 수신 (Wearable Data Layer)
+        startPhoneAckListener()
+
+        // 작업자 레지스트리 서버에서 로드 (P2P 오버레이에 이름 표시용)
+        loadWorkerRegistry()
+    }
+
+    /** 서버에서 작업자 목록 가져와서 레지스트리 저장 */
+    private fun loadWorkerRegistry() {
+        scope.launch {
+            try {
+                val registry = ServerClient.getWorkerRegistry()
+                if (registry.isNotBlank()) {
+                    applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE).edit()
+                        .putString("workerRegistry", registry)
+                        .apply()
+                    Log.d(TAG, "Worker registry loaded: $registry")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Worker registry load failed: ${e.message}")
+            }
+        }
+    }
+
+    /** 폰 → 워치 ACK 수신 리스너 */
+    private fun startPhoneAckListener() {
+        try {
+            com.google.android.gms.wearable.Wearable.getMessageClient(this)
+                .addListener { event ->
+                    if (event.path == "/safepulse/phone_ack") {
+                        Log.d(TAG, "📱 Phone ACK received → acknowledging")
+                        onAcknowledge()
+                    }
+                }
+            Log.d(TAG, "✅ Phone ACK listener registered")
+        } catch (e: Exception) {
+            Log.w(TAG, "Phone ACK listener failed: ${e.message}")
+        }
     }
 
     // ════════════════════════════════════════
@@ -382,7 +445,11 @@ class SensorService : Service(), SensorEventListener {
 
                 // 2단계: 충격 감지 (자유낙하 후 2초 이내 큰 충격)
                 if (freeFallDetected && !impactDetected) {
-                    if (now - freeFallTime > FALL_WINDOW_MS) {
+                    // HR=0이면 워치 벗는 중 → 낙상 아님
+                    if (heartRate <= 0 && heartRateZeroCount >= 2) {
+                        freeFallDetected = false
+                        Log.d(TAG, "⌚ Fall ignored — HR=0, likely watch removal")
+                    } else if (now - freeFallTime > FALL_WINDOW_MS) {
                         // 2초 지나면 리셋 (낙상 아님)
                         freeFallDetected = false
                     } else if (magnitude > IMPACT_THRESHOLD) {
@@ -415,8 +482,17 @@ class SensorService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    /** 심박 0 처리: 항상 먼저 물어보기 (양치기 효과 방지) */
+    /** 심박 0 처리 */
     private fun handleHeartRateZero() {
+        // 이미 WATCH_REMOVED면 절전 진입 체크
+        if (currentState == WorkerState.WATCH_REMOVED) {
+            if (heartRateZeroCount >= 10) { // 30초 이상 0 → 절전
+                monitorIntervalMs = 60000L  // 1분 간격
+                Log.d(TAG, "💤 Power save — watch off for 30s+")
+            }
+            return
+        }
+
         val wasAnomaly = currentState == WorkerState.MILD_ANOMALY ||
             currentState == WorkerState.WAITING_ACK ||
             currentState == WorkerState.FALL_DETECTED
@@ -424,19 +500,18 @@ class SensorService : Service(), SensorEventListener {
         wasAnomalyBeforeZero = wasAnomaly
 
         if (wasAnomaly) {
-            // 이상 상태에서 심박 0 → 위험 가능성 높지만, 먼저 물어봄
+            // 이상 상태에서 심박 0 → 위험 가능성
             Log.w(TAG, "⚠ HR=0 during anomaly ($currentState) → asking first")
             currentState = WorkerState.WAITING_ACK
             ackWaitStartTime = System.currentTimeMillis()
             monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
             notifyWorker("심박 감지가 안 됩니다. 괜찮으시면 확인을 눌러주세요!")
         } else {
-            // 정상에서 심박 0 → 벗었을 가능성 높지만, 그래도 물어봄
-            Log.d(TAG, "⌚ HR=0 from normal → likely removed, asking")
+            // 정상에서 심박 0 → 워치 벗음 (조용히)
+            Log.d(TAG, "⌚ HR=0 from normal → watch removed")
             currentState = WorkerState.WATCH_REMOVED
             monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
             heartRate = 0
-            // 워치 벗은 건 조용히 처리 (진동 안 함)
         }
     }
 
@@ -490,6 +565,10 @@ class SensorService : Service(), SensorEventListener {
 
     private fun startMonitoringLoop() {
         scope.launch {
+            // 즉시 첫 UI 업데이트 (workingView 빈 화면 방지)
+            broadcastStatus()
+            monitorIntervalMs = getIntervalForLevel(MonitorLevel.ACTIVE)  // 초기 30초로 시작
+
             while (isActive) {
                 delay(monitorIntervalMs)
 
@@ -609,16 +688,45 @@ class SensorService : Service(), SensorEventListener {
                 activeHrStd = activeHrStd * (1 - alpha) + std * alpha
             }
 
+            // SpO₂ 학습
+            if (spo2 in 70..100) {
+                spo2History.add(spo2)
+                if (spo2History.size > 500) spo2History.removeAt(0)
+                if (spo2History.size >= 20) {
+                    val mean = spo2History.average()
+                    spo2Mean = spo2Mean * (1 - alpha) + mean * alpha
+                    spo2Std = spo2Std * (1 - alpha) + spo2History.map { (it - mean) * (it - mean) }.average().let { sqrt(it) }.coerceAtLeast(1.0) * alpha
+                }
+            }
+
+            // 체온 학습
+            if (bodyTemp in 34.0..40.0) {
+                tempHistory.add(bodyTemp)
+                if (tempHistory.size > 200) tempHistory.removeAt(0)
+                if (tempHistory.size >= 10) {
+                    val mean = tempHistory.average()
+                    baselineTempMean = baselineTempMean * (1 - alpha) + mean * alpha
+                    baselineTempStd = baselineTempStd * (1 - alpha) + tempHistory.map { (it - mean) * (it - mean) }.average().let { sqrt(it) }.coerceAtLeast(0.2) * alpha
+                }
+            }
+
             if (!baselineReady) {
                 baselineReady = true
-                Log.d(TAG, "✅ Baseline ready: rest=${restHrMean.toInt()}±${restHrStd.toInt()}, active=${activeHrMean.toInt()}±${activeHrStd.toInt()}")
+                Log.d(TAG, "✅ Baseline ready: rest=${restHrMean.toInt()}±${restHrStd.toInt()}, active=${activeHrMean.toInt()}±${activeHrStd.toInt()}, SpO₂=${spo2Mean.toInt()}, temp=${"%.1f".format(baselineTempMean)}")
             }
             lastBaselineHR = restHrMean.toInt()
 
-            // SharedPreferences에 저장 (앱 재시작 시 복원용)
+            // SharedPreferences에 전체 베이스라인 저장 (앱 재시작 시 복원용)
             try {
                 applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE).edit()
                     .putInt("baselineHR", restHrMean.toInt())
+                    .putFloat("restHrStd", restHrStd.toFloat())
+                    .putFloat("activeHrMean", activeHrMean.toFloat())
+                    .putFloat("activeHrStd", activeHrStd.toFloat())
+                    .putFloat("spo2Mean", spo2Mean.toFloat())
+                    .putFloat("spo2Std", spo2Std.toFloat())
+                    .putFloat("baselineTempMean", baselineTempMean.toFloat())
+                    .putFloat("baselineTempStd", baselineTempStd.toFloat())
                     .putBoolean("baselineComplete", true)
                     .apply()
             } catch (_: Exception) {}
@@ -655,13 +763,16 @@ class SensorService : Service(), SensorEventListener {
                 val isTooLow = heartRate > 0 && heartRate < lowerLimit.toInt()
                 val isAbsoluteHigh = heartRate >= ABSOLUTE_MAX_HR
                 val isAbsoluteLow = heartRate in 1 until ABSOLUTE_MIN_HR
-                val isSpo2Low = spo2 in 1..93
+                val spo2AlertThreshold = (spo2Mean - alertSpo2Range).toInt().coerceIn(88, 95)
+                val isSpo2Low = spo2 in 1..spo2AlertThreshold
+                val tempAlertUpper = baselineTempMean + alertTempRange
+                val isTempHigh = bodyTemp > tempAlertUpper && bodyTemp > 37.0
 
                 // 급격한 하락 감지 (이전 대비 20bpm 이상 급락)
                 val isSuddenDrop = lastValidHeartRate > 0 && heartRate > 0 &&
                     (lastValidHeartRate - heartRate) > 20
 
-                if (isAbsoluteHigh || isAbsoluteLow || isSpo2Low) {
+                if (isAbsoluteHigh || isAbsoluteLow || isSpo2Low || isTempHigh) {
                     // 절대 상한/하한 → 즉시 경보
                     currentState = WorkerState.MILD_ANOMALY
                     anomalyStartTime = now
@@ -669,7 +780,8 @@ class SensorService : Service(), SensorEventListener {
                     val reason = when {
                         isAbsoluteHigh -> "심박 ${heartRate}bpm — 절대 상한 초과"
                         isAbsoluteLow -> "심박 ${heartRate}bpm — 서맥 위험"
-                        else -> "SpO₂ ${spo2}% — 산소포화도 저하"
+                        isTempHigh -> "체온 ${bodyTemp}°C — 기준 ${"%.1f".format(tempAlertUpper)}°C 초과"
+                        else -> "SpO₂ ${spo2}% — 기준 ${spo2AlertThreshold}% 미만"
                     }
                     Log.w(TAG, "🚨 $reason")
                     notifyWorker(reason)
@@ -697,9 +809,15 @@ class SensorService : Service(), SensorEventListener {
             WorkerState.WAITING_ACK -> {
                 val waitSec = (now - ackWaitStartTime) / 1000
 
+                // 30초마다 반복 알림 (진동+비프음) — 본인이 인지할 때까지
+                if (waitSec > 0 && waitSec % 30 < 2) {
+                    notifyWorker("이상 징후 — 괜찮으면 확인, 위급하면 긴급 버튼!")
+                    playBeep(3)
+                }
+
                 if (waitSec >= ACK_TIMEOUT_SEC) {
-                    // 5초 내 확인 안 누름 → P2P 경보 + 서버 전송!
-                    Log.w(TAG, "⏰ No ACK in ${ACK_TIMEOUT_SEC}s → escalating!")
+                    // 5분 무응답 → 의식 없음 → 자동 EMERGENCY
+                    Log.w(TAG, "⏰ No ACK in ${ACK_TIMEOUT_SEC}s → auto EMERGENCY")
                     currentState = if (isSleeping()) {
                         WorkerState.SLEEP_SUSPECTED
                     } else {
@@ -766,12 +884,44 @@ class SensorService : Service(), SensorEventListener {
             }
 
             WorkerState.EMERGENCY -> {
+                // ACK 쿨다운 중이면 즉시 ACKNOWLEDGED로 전환 (재에스컬레이션 방지)
+                if (now < ackCooldownUntil) {
+                    currentState = WorkerState.ACKNOWLEDGED
+                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_NEAR)
+                    BleAlertService.cancelEmergency(this)
+                    Log.d(TAG, "ACK cooldown active — back to ACKNOWLEDGED")
+                    return
+                }
+
                 // 🚨 단계 5: P2P BLE 경보 + 서버 알림 (고출력 모드)
                 monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)  // 1초 간격
                 Log.w(TAG, "🚨 EMERGENCY: HR=$heartRate, SpO2=$spo2, noMovement=${noMovementSeconds}s")
 
+                // fullScreenIntent로 AckAlertActivity 표시 (BAL_BLOCK 우회)
+                try {
+                    val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        putExtra("state", "EMERGENCY")
+                    }
+                    val pi = PendingIntent.getActivity(this, 1, ackIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                    val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
+                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                        .setContentTitle("긴급 상황")
+                        .setPriority(NotificationCompat.PRIORITY_MAX)
+                        .setCategory(NotificationCompat.CATEGORY_ALARM)
+                        .setFullScreenIntent(pi, true)
+                        .setAutoCancel(true)
+                        .setTimeoutAfter(1000)
+                        .build()
+                    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
+                } catch (_: Exception) {}
+
                 // P2P BLE 경보 발동
                 BleAlertService.broadcastEmergency(this, WORKER_ID)
+
+                // 폰에 긴급 전송 (Wearable Data Layer)
+                WearableCommService.sendEmergency(this, WORKER_ID, heartRate, spo2)
 
                 // 서버에 긴급 알림
                 scope.launch {
@@ -818,6 +968,7 @@ class SensorService : Service(), SensorEventListener {
     fun onAcknowledge() {
         Log.d(TAG, "Worker acknowledged alert — feeding HR=$heartRate as normal")
         currentState = WorkerState.ACKNOWLEDGED
+        ackCooldownUntil = System.currentTimeMillis() + 30_000L  // 30초 쿨다운
         monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_NEAR)  // 추적 감시
 
         // "괜찮아요" = 현재 심박은 정상 → 학습 데이터에 추가!
@@ -835,15 +986,52 @@ class SensorService : Service(), SensorEventListener {
             }
         }
 
+        // SpO₂ 피드백 학습
+        if (spo2 in 70..100) {
+            for (i in 1..5) spo2History.add(spo2)
+            Log.d(TAG, "📈 User confirmed SpO₂=$spo2 as normal")
+        }
+        // 체온 피드백 학습
+        if (bodyTemp in 34.0..40.0) {
+            for (i in 1..5) tempHistory.add(bodyTemp)
+            Log.d(TAG, "📈 User confirmed temp=$bodyTemp as normal")
+        }
+
         // P2P 경보 중이었다면 해제
         BleAlertService.cancelEmergency(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_ACKNOWLEDGE) {
-            onAcknowledge()
+        when (intent?.action) {
+            ACTION_ACKNOWLEDGE -> onAcknowledge()
+            ACTION_MANUAL_EMERGENCY -> onManualEmergency()
+            ACTION_DISMISS -> onDismiss()
         }
         return START_STICKY
+    }
+
+    /** 본인이 "즉시 호출" 버튼 → 즉시 P2P + 서버 */
+    private fun onManualEmergency() {
+        Log.w(TAG, "🚨 MANUAL EMERGENCY by worker!")
+        currentState = WorkerState.EMERGENCY
+        anomalyStartTime = System.currentTimeMillis()
+        ackCooldownUntil = 0L
+        monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
+        // 즉시 P2P 경보 발동
+        BleAlertService.broadcastEmergency(this, WORKER_ID)
+        WearableCommService.sendEmergency(this, WORKER_ID, heartRate, spo2)
+        emergencyVibrate()
+        playBeep(5)
+    }
+
+    /** 오작동 종료 (학습 안 함 + 경보 해제) */
+    private fun onDismiss() {
+        Log.d(TAG, "⏹ Dismissed — no learning")
+        currentState = WorkerState.NORMAL
+        ackCooldownUntil = System.currentTimeMillis() + 30_000L
+        monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
+        BleAlertService.cancelEmergency(this)
+        // 학습 안 함 — 센서 오류/일시적이라 베이스라인에 반영하지 않음
     }
 
     // ════════════════════════════════════════
@@ -859,31 +1047,32 @@ class SensorService : Service(), SensorEventListener {
         }
         vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
 
-        // 확인 버튼이 있는 알림
-        val ackIntent = Intent(this, SensorService::class.java).apply {
-            action = ACTION_ACKNOWLEDGE
-        }
-        val ackPending = PendingIntent.getService(this, 0, ackIntent, PendingIntent.FLAG_IMMUTABLE)
+        // fullScreenIntent로 AckAlertActivity 실행 (BAL_BLOCK 우회)
+        try {
+            val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra("state", currentState.name)
+                putExtra("message", message)
+            }
+            val pi = PendingIntent.getActivity(this, 1, ackIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-            .setContentTitle("SafePulse")
-            .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .addAction(android.R.drawable.ic_menu_send, "✅ 확인 (괜찮아요)", ackPending)
-            .setAutoCancel(false)
-            .setOngoing(true)
-            .build()
+            val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle("이상 감지")
+                .setContentText(message)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setFullScreenIntent(pi, true)
+                .setAutoCancel(true)
+                .setTimeoutAfter(1000)
+                .build()
 
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-            .notify(ALERT_NOTIFICATION_ID, notification)
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
+        } catch (_: Exception) {}
 
-        // 브로드캐스트
-        sendBroadcast(Intent("com.dainon.safepulse.ALERT").apply {
-            putExtra("message", message)
-            putExtra("state", currentState.name)
-        })
+        // 비프음
+        playBeep(3)
     }
 
     private fun emergencyVibrate() {
@@ -896,6 +1085,9 @@ class SensorService : Service(), SensorEventListener {
         vibrator.vibrate(VibrationEffect.createWaveform(
             longArrayOf(0, 500, 200, 500, 200, 1000), -1
         ))
+
+        // 긴급 비프음 (삐-삐-삐)
+        playBeep(3)
     }
 
     // ════════════════════════════════════════
@@ -903,6 +1095,11 @@ class SensorService : Service(), SensorEventListener {
     // ════════════════════════════════════════
 
     private suspend fun sendToServer() {
+        val statusStr = when (currentState) {
+            WorkerState.EMERGENCY -> "danger"
+            WorkerState.FALL_DETECTED, WorkerState.WAITING_ACK, WorkerState.MILD_ANOMALY -> "caution"
+            else -> "normal"
+        }
         val payload = SensorPayload(
             workerId = WORKER_ID,
             heartRate = heartRate,
@@ -910,6 +1107,7 @@ class SensorService : Service(), SensorEventListener {
             bodyTemp = bodyTemp,
             stress = calculateStress(),
             latitude = latitude, longitude = longitude,
+            status = statusStr,
         )
         ServerClient.sendSensorData(payload)
     }
@@ -927,6 +1125,7 @@ class SensorService : Service(), SensorEventListener {
         }
 
         sendBroadcast(Intent("com.dainon.safepulse.SENSOR_UPDATE").apply {
+            setPackage("com.dainon.safepulse")
             putExtra("heartRate", heartRate)
             putExtra("spo2", if (spo2 > 0) spo2 else 98)
             putExtra("bodyTemp", bodyTemp)
@@ -957,11 +1156,14 @@ class SensorService : Service(), SensorEventListener {
                     "workerId" to WORKER_ID,
                     "heartRate" to heartRate,
                     "spo2" to (if (spo2 > 0) spo2 else 98),
+                    "bodyTemp" to bodyTemp,
+                    "stress" to calculateStress(),
                     "state" to currentState.name,
                     "stateKr" to stateKr,
                     "baselineReady" to baselineReady,
                     "restHrMean" to restHrMean.toInt(),
                     "activeHrMean" to activeHrMean.toInt(),
+                    "monitorLevel" to monitorLevel.name,
                 ))
             } catch (_: Exception) {}
         }
@@ -995,12 +1197,25 @@ class SensorService : Service(), SensorEventListener {
         val intent = Intent(this, MainActivity::class.java)
         val pending = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("SafePulse")
+            .setContentTitle("모니터링 중")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pending)
             .setOngoing(true)
             .build()
+    }
+
+    /** 비프음 재생 (삐-삐-삐 패턴) */
+    private fun playBeep(count: Int) {
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+            for (i in 0 until count) {
+                Handler(mainLooper).postDelayed({
+                    try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200) } catch (_: Exception) {}
+                }, (i * 400).toLong())
+            }
+            Handler(mainLooper).postDelayed({ try { toneGen.release() } catch (_: Exception) {} }, (count * 400 + 200).toLong())
+        } catch (_: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#EE8B0000"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🚨 긴급!"
+        android:textSize="20sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:gravity="center" />
+
+    <TextView
+        android:id="@+id/tvAlertName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="작업자"
+        android:textSize="24sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginTop="4dp" />
+
+    <TextView
+        android:id="@+id/tvAlertDistance"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="~10m"
+        android:textSize="16sp"
+        android:textColor="#FFEB3B"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginTop="2dp" />
+
+    <Button
+        android:id="@+id/btnRespond"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:text="🏃 응답함"
+        android:textSize="18sp"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#43A047"
+        android:layout_marginTop="8dp" />
+
+    <Button
+        android:id="@+id/btnCantHelp"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:text="도움불가"
+        android:textSize="12sp"
+        android:textColor="#BDBDBD"
+        android:backgroundTint="#424242"
+        android:layout_marginTop="4dp" />
+
+</LinearLayout>

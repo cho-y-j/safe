@@ -18,6 +18,7 @@
         android:allowBackup="true"
         android:label="SafePulse 관리"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.SafePulseCompanion">
 
         <meta-data
@@ -36,6 +37,11 @@
         <activity
             android:name=".phone.ui.HealthReportActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".phone.ui.EmergencyMapActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SafePulseCompanion" />
 
         <service
             android:name=".phone.service.BridgeService"

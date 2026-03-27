@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0A1118">
+
+    <!-- 상단 긴급 배너 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#E53935"
+        android:padding="12dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🚨 긴급 상황"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvMapElapsed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0초 전"
+            android:textSize="12sp"
+            android:textColor="#FFCDD2" />
+    </LinearLayout>
+
+    <!-- 작업자 정보 카드 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#111D29"
+        android:padding="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvMapWorkerName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="작업자"
+                android:textSize="20sp"
+                android:textColor="#E0E6ED"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvMapDistance"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="~0m"
+                android:textSize="14sp"
+                android:textColor="#FFEB3B"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvMapZone"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="구역 정보"
+            android:textSize="12sp"
+            android:textColor="#7A8FA3"
+            android:layout_marginTop="2dp" />
+    </LinearLayout>
+
+    <!-- 지도 (WebView + OpenStreetMap) -->
+    <WebView
+        android:id="@+id/mapWebView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- 하단 버튼 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="#111D29">
+
+        <Button
+            android:id="@+id/btnNavigate"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="🗺 길 안내"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2E75B6"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/btnMapBack"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="돌아가기"
+            android:textSize="14sp"
+            android:textColor="#7A8FA3"
+            android:backgroundTint="#1E3044"
+            android:layout_marginStart="4dp" />
+    </LinearLayout>
+
+</LinearLayout>

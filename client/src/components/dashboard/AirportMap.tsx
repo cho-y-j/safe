@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { MapContainer, ImageOverlay, Marker, Popup, Circle, LayerGroup, useMap } from 'react-leaflet';
 import { Card, CardContent, Typography, Box, Chip, Switch, ToggleButtonGroup, ToggleButton } from '@mui/material';
 import L from 'leaflet';
@@ -117,11 +117,13 @@ function MapViewController({ center, zoom }: { center: [number, number]; zoom: n
 export default function AirportMap() {
   const workers = useWorkerStore((s) => s.workers);
   const selectWorker = useWorkerStore((s) => s.selectWorker);
+  const selectedWorkerId = useWorkerStore((s) => s.selectedWorkerId);
   const privacyMode = usePrivacyStore((s) => s.privacyMode);
 
   const [selectedTerminal, setSelectedTerminal] = useState('T1');
   const [selectedFloor, setSelectedFloor] = useState('3F');
   const [showAED, setShowAED] = useState(true);
+  const mapRef = useRef<any>(null);
 
   const terminal = TERMINALS.find((t) => t.id === selectedTerminal)!;
 
@@ -131,6 +133,16 @@ export default function AirportMap() {
       setSelectedFloor(terminal.floors[Math.floor(terminal.floors.length / 2)]);
     }
   }, [selectedTerminal]);
+
+  // 선택된 작업자로 자동 줌 (긴급 지도 보기)
+  useEffect(() => {
+    if (selectedWorkerId && mapRef.current) {
+      const worker = workers.find((w) => w.id === selectedWorkerId);
+      if (worker && worker.lat && worker.lng) {
+        mapRef.current.setView([worker.lat, worker.lng], 18, { animate: true });
+      }
+    }
+  }, [selectedWorkerId, workers]);
 
   const floorPlanUrl = `/assets/floors/${selectedTerminal}-${selectedFloor}.png`;
 
@@ -246,6 +258,7 @@ export default function AirportMap() {
           zoomControl={false}
           minZoom={15}
           maxZoom={20}
+          ref={mapRef}
         >
           <MapViewController center={terminal.center} zoom={terminal.zoom} />
 

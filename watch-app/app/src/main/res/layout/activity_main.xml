@@ -124,15 +124,19 @@
                     <TextView android:id="@+id/tvBaselineUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="8sp" android:textColor="#5A7A96" android:gravity="center" />
                 </LinearLayout>
 
-                <!-- 심박 + SpO₂ -->
+                <!-- 심박 + SpO₂ + 체온 (3열) -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="6dp" android:layout_marginEnd="2dp">
-                        <TextView android:id="@+id/tvHeartRate" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="28sp" android:textColor="#FFFFFF" android:textStyle="bold" />
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="💓 bpm" android:textSize="9sp" android:textColor="#7A8FA3" />
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="4dp" android:layout_marginEnd="1dp">
+                        <TextView android:id="@+id/tvHeartRate" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="22sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="💓bpm" android:textSize="8sp" android:textColor="#7A8FA3" />
                     </LinearLayout>
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="6dp" android:layout_marginStart="2dp">
-                        <TextView android:id="@+id/tvSpO2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--%"  android:textSize="28sp" android:textColor="#FFFFFF" android:textStyle="bold" />
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🫁 SpO₂" android:textSize="9sp" android:textColor="#7A8FA3" />
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="4dp" android:layout_marginStart="1dp" android:layout_marginEnd="1dp">
+                        <TextView android:id="@+id/tvSpO2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--%"  android:textSize="22sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🫁SpO₂" android:textSize="8sp" android:textColor="#7A8FA3" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#111D29" android:padding="4dp" android:layout_marginStart="1dp">
+                        <TextView android:id="@+id/tvBodyTemp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--°" android:textSize="22sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🌡체온" android:textSize="8sp" android:textColor="#7A8FA3" />
                     </LinearLayout>
                 </LinearLayout>
 
@@ -171,12 +175,91 @@
         </LinearLayout>
     </ScrollView>
 
+    <!-- ═══ P2P 수신 경보 오버레이 ═══ -->
+    <LinearLayout
+        android:id="@+id/p2pOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#EE8B0000"
+        android:padding="12dp"
+        android:visibility="gone"
+        android:clickable="true">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🚨 즉시 호출"
+            android:textSize="18sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/tvP2pWorkerName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="작업자"
+            android:textSize="24sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/tvP2pAlertType"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="이상 징후"
+            android:textSize="10sp"
+            android:textColor="#FFCDD2"
+            android:gravity="center"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvP2pDistance"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="~10m"
+            android:textSize="16sp"
+            android:textColor="#FFEB3B"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginTop="2dp" />
+
+        <Button
+            android:id="@+id/btnP2pRespond"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="🏃 응답함"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#43A047"
+            android:layout_marginTop="4dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp" />
+
+        <Button
+            android:id="@+id/btnP2pCantHelp"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:text="도움불가"
+            android:textSize="11sp"
+            android:textColor="#BDBDBD"
+            android:backgroundTint="#424242"
+            android:layout_marginTop="2dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp" />
+    </LinearLayout>
+
     <!-- ═══ 확인 요청 오버레이 ═══ -->
-    <LinearLayout android:id="@+id/ackOverlay" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:background="#CC0A1118" android:padding="16dp" android:visibility="gone" android:clickable="true">
-        <TextView android:id="@+id/tvAckTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="괜찮으세요?" android:textSize="18sp" android:textColor="#FFB74D" android:textStyle="bold" android:gravity="center" />
-        <TextView android:id="@+id/tvAckMessage" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="이상 징후 감지" android:textSize="11sp" android:textColor="#B0BEC5" android:gravity="center" android:layout_marginTop="8dp" />
-        <TextView android:id="@+id/tvAckTimer" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="5초 후 경보" android:textSize="10sp" android:textColor="#EF5350" android:gravity="center" android:layout_marginTop="4dp" />
-        <Button android:id="@+id/btnAckOk" android:layout_width="160dp" android:layout_height="56dp" android:text="✅ 괜찮아요" android:textSize="16sp" android:textColor="#FFFFFF" android:backgroundTint="#43A047" android:layout_marginTop="16dp" />
+    <LinearLayout android:id="@+id/ackOverlay" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:background="#EE0A1118" android:padding="20dp" android:visibility="gone" android:clickable="true">
+        <TextView android:id="@+id/tvAckTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="괜찮으세요?" android:textSize="20sp" android:textColor="#FFB74D" android:textStyle="bold" android:gravity="center" />
+        <TextView android:id="@+id/tvAckMessage" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" android:text="" android:textSize="1sp" />
+        <Button android:id="@+id/btnAckOk" android:layout_width="match_parent" android:layout_height="64dp" android:text="✅ 괜찮아요" android:textSize="18sp" android:textColor="#FFFFFF" android:backgroundTint="#43A047" android:layout_marginTop="8dp" />
+        <Button android:id="@+id/btnAckDismiss" android:layout_width="match_parent" android:layout_height="48dp" android:text="⏹ 오작동 종료" android:textSize="14sp" android:textColor="#B0BEC5" android:backgroundTint="#37474F" android:layout_marginTop="4dp" />
+        <Button android:id="@+id/btnAckEmergency" android:layout_width="match_parent" android:layout_height="64dp" android:text="🚨 즉시 호출" android:textSize="18sp" android:textColor="#FFFFFF" android:backgroundTint="#E53935" android:layout_marginTop="16dp" />
+        <TextView android:id="@+id/tvAckTimer" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="무응답 시 자동 경보" android:textSize="9sp" android:textColor="#5A7A96" android:gravity="center" android:layout_marginTop="4dp" />
     </LinearLayout>
 
 </FrameLayout>

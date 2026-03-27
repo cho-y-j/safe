@@ -17,6 +17,7 @@ export function useWebSocket() {
   useEffect(() => {
     const socket = io(WS_URL, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
+    (window as any).__safepulse_socket = socket;  // EmergencyOverlay에서 접근
 
     socket.on('connect', () => {
       setConnected(true);
@@ -78,6 +79,25 @@ export function useWebSocket() {
           }
         }
       }
+    });
+
+    // 긴급 이벤트 직접 수신 (workers:update와 별도 경로)
+    socket.on('emergency', (data: any) => {
+      const name = data.worker?.name || data.alert?.workerId || '작업자';
+      const zone = data.worker?.zone || '';
+      addEvent({
+        level: 'danger',
+        message: `🚨 ${name} (${zone}) 긴급 상황 발생!`,
+        workerId: data.alert?.workerId,
+        zone,
+      });
+    });
+
+    socket.on('emergency:ack', (data: any) => {
+      addEvent({
+        level: 'info',
+        message: `✅ ${data.workerId} 경보 해제 (${data.source})`,
+      });
     });
 
     return () => {

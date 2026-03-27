@@ -9,6 +9,7 @@ data class SensorPayload(
     val stress: Int,
     val latitude: Double,
     val longitude: Double,
+    val status: String = "normal",
     val timestamp: Long = System.currentTimeMillis()
 )
 

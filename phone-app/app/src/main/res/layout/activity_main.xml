@@ -49,27 +49,105 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 워치 상태 카드 -->
+    <!-- 상태 바 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+        <TextView android:id="@+id/tvWorkerId" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" android:textColor="#E0E6ED" android:textStyle="bold" />
+        <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+        <TextView android:id="@+id/tvWatchStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="대기" android:textSize="14sp" android:textColor="#FFB74D" android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 실시간 바이탈 6칸 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="#111D29"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp">
+
+        <!-- 1행: HR + SpO₂ + 체온 -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="8dp">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#0A1118" android:padding="8dp" android:layout_marginEnd="4dp">
+                <TextView android:id="@+id/tvPhoneHR" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="24sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="💓 bpm" android:textSize="10sp" android:textColor="#7A8FA3" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#0A1118" android:padding="8dp" android:layout_marginEnd="4dp">
+                <TextView android:id="@+id/tvPhoneSpO2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--%"  android:textSize="24sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🫁 SpO₂" android:textSize="10sp" android:textColor="#7A8FA3" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#0A1118" android:padding="8dp">
+                <TextView android:id="@+id/tvPhoneTemp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--°"  android:textSize="24sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🌡 체온" android:textSize="10sp" android:textColor="#7A8FA3" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 2행: 스트레스 + 베이스라인 -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#0A1118" android:padding="6dp" android:layout_marginEnd="4dp">
+                <TextView android:id="@+id/tvPhoneStress" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="16sp" android:textColor="#FFFFFF" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="스트레스" android:textSize="9sp" android:textColor="#7A8FA3" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#0A1118" android:padding="6dp" android:layout_marginEnd="4dp">
+                <TextView android:id="@+id/tvPhoneBaseline" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" android:textColor="#43A047" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="안정HR" android:textSize="9sp" android:textColor="#7A8FA3" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:gravity="center" android:background="#0A1118" android:padding="6dp">
+                <TextView android:id="@+id/tvSignal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" android:textSize="14sp" android:textColor="#2E75B6" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="활동HR" android:textSize="9sp" android:textColor="#7A8FA3" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ═══ 긴급 상황 카드 (기본 숨김) ═══ -->
+    <LinearLayout
+        android:id="@+id/emergencyCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#111D29"
         android:padding="16dp"
-        android:layout_marginBottom="12dp">
+        android:layout_marginBottom="12dp"
+        android:visibility="gone">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="워치 상태"
-            android:textSize="12sp"
-            android:textColor="#7A8FA3"
-            android:layout_marginBottom="8dp" />
-
+        <!-- 빨간 상단 바 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="#E53935"
+            android:padding="8dp"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🚨 긴급 상황 감지"
+                android:textSize="14sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvEmergencyElapsed"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0초"
+                android:textSize="12sp"
+                android:textColor="#FFCDD2" />
+        </LinearLayout>
+
+        <!-- 바이탈 정보 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -77,22 +155,20 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center">
-
                 <TextView
-                    android:id="@+id/tvWorkerId"
+                    android:id="@+id/tvEmergencyHR"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="--"
-                    android:textSize="20sp"
-                    android:textColor="#E0E6ED"
+                    android:textSize="28sp"
+                    android:textColor="#E53935"
                     android:textStyle="bold" />
-
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="작업자 ID"
+                    android:text="💓 bpm"
                     android:textSize="10sp"
-                    android:textColor="#5A7A96" />
+                    android:textColor="#7A8FA3" />
             </LinearLayout>
 
             <LinearLayout
@@ -101,48 +177,111 @@
                 android:layout_weight="1"
                 android:orientation="vertical"
                 android:gravity="center">
-
                 <TextView
-                    android:id="@+id/tvWatchStatus"
+                    android:id="@+id/tvEmergencySpO2"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="대기"
-                    android:textSize="20sp"
-                    android:textColor="#FFB74D"
+                    android:text="--%"
+                    android:textSize="28sp"
+                    android:textColor="#E0E6ED"
                     android:textStyle="bold" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🫁 SpO₂"
+                    android:textSize="10sp"
+                    android:textColor="#7A8FA3" />
+            </LinearLayout>
 
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+                <TextView
+                    android:id="@+id/tvEmergencyState"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="응급"
+                    android:textSize="16sp"
+                    android:textColor="#E53935"
+                    android:textStyle="bold" />
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="상태"
                     android:textSize="10sp"
-                    android:textColor="#5A7A96" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical"
-                android:gravity="center">
-
-                <TextView
-                    android:id="@+id/tvSignal"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="--"
-                    android:textSize="20sp"
-                    android:textColor="#7A8FA3"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="신호"
-                    android:textSize="10sp"
-                    android:textColor="#5A7A96" />
+                    android:textColor="#7A8FA3" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- 버튼들 (발신자: 지도 불필요, 문제없음 + 119만) -->
+        <Button
+            android:id="@+id/btnPhoneAck"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="✅ 문제 없음 (경보 해제)"
+            android:textSize="16sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#43A047"
+            android:layout_marginBottom="6dp" />
+
+        <Button
+            android:id="@+id/btnCall119"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:text="🚨 119 신고"
+            android:textSize="13sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#E53935" />
+    </LinearLayout>
+
+    <!-- ═══ 수신자용 P2P 긴급 카드 (기본 숨김) ═══ -->
+    <LinearLayout
+        android:id="@+id/p2pCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#111D29"
+        android:padding="16dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#E53935"
+            android:padding="10dp"
+            android:layout_marginBottom="8dp">
+            <TextView
+                android:id="@+id/tvP2pTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🚨 주변 긴급!"
+                android:textSize="16sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnP2pMap"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="📍 사고자 위치 보기"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2E75B6"
+            android:layout_marginBottom="6dp" />
+
+        <Button
+            android:id="@+id/btnP2pDismiss"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:text="✅ 확인 (알림 종료)"
+            android:textSize="13sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#43A047" />
     </LinearLayout>
 
     <!-- 내 건강 리포트 버튼 -->
@@ -156,7 +295,7 @@
         android:backgroundTint="#111D29"
         android:layout_marginBottom="8dp" />
 
-    <!-- 큰 확인 버튼 (이상 감지 시 사용) -->
+    <!-- 큰 확인 버튼 (이상 감지 시 사용 — 레거시, 긴급카드로 대체) -->
     <Button
         android:id="@+id/btnAck"
         android:layout_width="match_parent"

@@ -14,7 +14,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "SERVER_URL", "\"http://192.168.0.10:4000\"")
+        buildConfigField("String", "SERVER_URL", "\"http://192.168.0.9:4000\"")
     }
 
     buildTypes {

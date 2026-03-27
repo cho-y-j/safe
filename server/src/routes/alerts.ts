@@ -54,6 +54,63 @@ router.get('/', async (req, res) => {
   }
 });
 
+// 경보 확인 (워치/폰/대시보드에서)
+router.post('/acknowledge', async (req, res) => {
+  try {
+    const { workerId, source } = req.body;
+    console.log(`[ACK] ${workerId || 'unknown'} acknowledged from ${source || 'unknown'}`);
+
+    // 최근 미해결 긴급 알림 해제
+    const recentAlerts = await Alert.findAll({
+      where: {
+        level: 'danger',
+        resolved: false,
+        ...(workerId ? { workerId } : {}),
+      },
+      order: [['createdAt', 'DESC']],
+      limit: 5,
+    });
+
+    for (const alert of recentAlerts) {
+      await alert.update({ resolved: true });
+    }
+
+    // WebSocket으로 ACK 브로드캐스트
+    const { io } = require('../app');
+    io.emit('emergency:ack', {
+      workerId,
+      source,
+      resolvedCount: recentAlerts.length,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({ success: true, resolvedCount: recentAlerts.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to acknowledge' });
+  }
+});
+
+// 수신자 응답 (P2P "응답함" / "도움불가")
+router.post('/respond', async (req, res) => {
+  try {
+    const { workerId, responderId, action } = req.body;
+    console.log(`[P2P Response] ${responderId} → ${action} for ${workerId}`);
+
+    // WebSocket으로 응답 브로드캐스트 (대시보드에 표시)
+    const { io } = require('../app');
+    io.emit('emergency:respond', {
+      workerId,
+      responderId,
+      action, // "responding" or "cant_help"
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to record response' });
+  }
+});
+
 // 알림 해제
 router.patch('/:id/resolve', async (req, res) => {
   try {

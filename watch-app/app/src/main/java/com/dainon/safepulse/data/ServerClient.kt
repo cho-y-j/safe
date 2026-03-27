@@ -143,6 +143,25 @@ object ServerClient {
         }
     }
 
+    /** 작업자 레지스트리 로드 (P2P 이름 표시용) → "W-001:조영진,W-002:이서준" 형태 */
+    suspend fun getWorkerRegistry(): String = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/api/workers")
+                .get()
+                .build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: return@withContext ""
+                val type = object : TypeToken<List<Map<String, Any>>>() {}.type
+                val workers: List<Map<String, Any>> = gson.fromJson(body, type)
+                workers.joinToString(",") { "${it["id"]}:${it["name"]}" }
+            } else ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
     /** 서버 헬스체크 */
     suspend fun healthCheck(): Boolean = withContext(Dispatchers.IO) {
         try {

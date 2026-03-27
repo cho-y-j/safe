@@ -45,6 +45,13 @@ object BleAlertService {
     private var advertiser: BluetoothLeAdvertiser? = null
     private var scanner: BluetoothLeScanner? = null
     private var isScanning = false
+    private var lastEmergencyBroadcastTime = 0L  // 디바운스용
+
+    // 수신 경보 제어
+    private val suppressedWorkerIds = mutableSetOf<String>()
+    private val suppressedTimestamps = mutableMapOf<String, Long>()
+    private var activeVibrator: Vibrator? = null
+    private val activeEmergencyWorkers = mutableMapOf<String, Long>()  // workerId → 마지막 진동 시작 시각
 
     // ════════════════════════════════════════
     // 광고 (Advertise) — 내 상태를 주변에 알림
@@ -77,8 +84,12 @@ object BleAlertService {
         }
     }
 
-    /** 응급 시: 긴급 경보 광고 */
+    /** 응급 시: 긴급 경보 광고 (2초 디바운스) */
     fun broadcastEmergency(context: Context, workerId: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastEmergencyBroadcastTime < 2000) return  // 2초 이내 재호출 무시
+        lastEmergencyBroadcastTime = now
+
         try {
             isEmergency = true
             emergencyWorkerId = workerId
@@ -109,13 +120,35 @@ object BleAlertService {
         }
     }
 
-    /** 경보 해제 */
+    /** 경보 해제 (발신자) */
     fun cancelEmergency(context: Context) {
         isEmergency = false
-        advertiser?.stopAdvertising(advertiseCallback)
+        lastEmergencyBroadcastTime = 0L
+        try {
+            advertiser?.stopAdvertising(advertiseCallback)
+        } catch (_: SecurityException) {}
         // 정상 모드로 복귀
         startNormalAdvertise(context, emergencyWorkerId)
         Log.d(TAG, "Emergency cancelled, back to normal")
+    }
+
+    /** 수신 경보 해제 (수신자가 "응답함" 또는 "도움불가" 탭) */
+    fun dismissReceivedAlert(workerId: String) {
+        suppressedWorkerIds.add(workerId)
+        suppressedTimestamps[workerId] = System.currentTimeMillis()
+        activeEmergencyWorkers.remove(workerId)
+        activeVibrator?.cancel()
+        Log.d(TAG, "Dismissed received alert from $workerId")
+    }
+
+    /** 수신 경보 억제 해제 (30초 후 자동) */
+    private fun cleanupSuppressed() {
+        val now = System.currentTimeMillis()
+        val expired = suppressedTimestamps.filter { now - it.value > 30_000 }.keys
+        expired.forEach {
+            suppressedWorkerIds.remove(it)
+            suppressedTimestamps.remove(it)
+        }
     }
 
     private fun buildAdvertiseData(workerId: String, emergency: Boolean): AdvertiseData {
@@ -204,24 +237,91 @@ object BleAlertService {
         val workerId = payload.substring(2, payload.length - 1)
         val status = payload.last()
 
+        // 만료된 suppress 정리
+        cleanupSuppressed()
+
         if (status == 'E') {
-            // 🚨 긴급 경보 수신!
+            // 수신자가 이미 해제한 경보는 무시
+            if (workerId in suppressedWorkerIds) return
+
             val rssi = result.rssi
             val distance = estimateDistance(rssi)
             val alertIntensity = calculateAlertIntensity(distance)
+            val now = System.currentTimeMillis()
 
-            Log.w(TAG, "🚨 EMERGENCY from $workerId | RSSI=$rssi, dist=${distance}m, intensity=${alertIntensity}%")
+            // 거리 구간 분류 (연구 기반: MobileHCI 2020)
+            val zone = when {
+                rssi > -60 || distance < 10.0 -> "IMMEDIATE"
+                rssi > -75 || distance < 30.0 -> "NEAR"
+                else -> "FAR"
+            }
 
-            // 거리비례 진동!
-            vibrateByDistance(context, alertIntensity)
+            // 중복 알림 방지: 같은 작업자 30초 이내 재수신이면 스킵
+            val lastVibTime = activeEmergencyWorkers[workerId] ?: 0L
+            val shouldVibrate = now - lastVibTime > 30000
 
-            // UI에 알림
-            context.sendBroadcast(Intent("com.dainon.safepulse.P2P_ALERT").apply {
-                putExtra("workerId", workerId)
-                putExtra("rssi", rssi)
-                putExtra("distance", distance)
-                putExtra("intensity", alertIntensity)
-            })
+            if (shouldVibrate) {
+                activeEmergencyWorkers[workerId] = now
+                Log.w(TAG, "🚨 EMERGENCY from $workerId | RSSI=$rssi, dist=${"%.1f".format(distance)}m, zone=$zone")
+                vibrateByDistance(context, alertIntensity, zone)
+                // 긴급 비프음 (수신 측: 삐-삐-삐)
+                try {
+                    val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+                    for (i in 0 until 3) {
+                        android.os.Handler(context.mainLooper).postDelayed({
+                            try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200) } catch (_: Exception) {}
+                        }, (i * 400).toLong())
+                    }
+                    android.os.Handler(context.mainLooper).postDelayed({ try { toneGen.release() } catch (_: Exception) {} }, 1400)
+                } catch (_: Exception) {}
+            }
+
+            // fullScreenIntent로 P2pAlertActivity 실행 (BAL_BLOCK 우회)
+            val appCtx = context.applicationContext
+            val prefs = appCtx.getSharedPreferences("safepulse", Context.MODE_PRIVATE)
+            val registry = prefs.getString("workerRegistry", "") ?: ""
+            val workerName = registry.split(",")
+                .mapNotNull { e -> val p = e.split(":"); if (p.size == 2 && p[0].trim() == workerId) p[1].trim() else null }
+                .firstOrNull() ?: workerId
+
+            try {
+                val alertIntent = Intent(appCtx, com.dainon.safepulse.ui.P2pAlertActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    putExtra("workerId", workerId)
+                    putExtra("workerName", workerName)
+                    putExtra("distance", distance)
+                    putExtra("zone", zone)
+                }
+                val pi = android.app.PendingIntent.getActivity(
+                    appCtx, 0, alertIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notification = androidx.core.app.NotificationCompat.Builder(appCtx, "safepulse_alert")
+                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                    .setContentTitle("주변 긴급")
+                    .setContentText("$workerName ${"%.0f".format(distance)}m")
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
+                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ALARM)
+                    .setFullScreenIntent(pi, true)
+                    .setAutoCancel(true)
+                    .setTimeoutAfter(1000)
+                    .build()
+
+                val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.notify(999, notification)
+            } catch (e: Exception) {
+                Log.e(TAG, "P2P alert failed: ${e.message}")
+            }
+        } else if (status == 'N') {
+            // 정상으로 복귀 → 진동 취소 + suppress 해제
+            if (workerId in activeEmergencyWorkers) {
+                activeVibrator?.cancel()
+                activeEmergencyWorkers.remove(workerId)
+                Log.d(TAG, "Worker $workerId back to normal → vibration cancelled")
+            }
+            suppressedWorkerIds.remove(workerId)
+            suppressedTimestamps.remove(workerId)
         }
     }
 
@@ -251,10 +351,16 @@ object BleAlertService {
     }
 
     /**
-     * 거리에 비례하는 진동 출력
-     * 가까이 = 강하고 길게, 멀리 = 약하고 짧게
+     * 3구간 거리비례 반복 진동 (MobileHCI 2020 연구 기반)
+     *
+     * 핵심: inter-pulse interval이 긴급도 인지에 가장 효과적
+     * - 즉시근접(<10m): 쉴 틈 없이 빠른 연속 → 즉시 행동
+     * - 근처(10-30m): 3연타 + 2초 휴식 → 높은 긴급도
+     * - 멀리(>30m): 2연타 + 5초 휴식 → 인지만
+     *
+     * 반복(repeat≥0)으로 사용자가 직접 해제해야 멈춤
      */
-    private fun vibrateByDistance(context: Context, intensityPercent: Int) {
+    private fun vibrateByDistance(context: Context, intensityPercent: Int, zone: String = "NEAR") {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
             vm.defaultVibrator
@@ -262,27 +368,33 @@ object BleAlertService {
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
+        activeVibrator = vibrator  // dismiss 시 cancel 가능하도록 저장
 
-        val amplitude = (intensityPercent * 2.55).toInt().coerceIn(1, 255)  // 0~100% → 1~255
-        val duration = (intensityPercent * 5L + 100).coerceIn(100, 1000)    // 100ms~1000ms
-
-        if (intensityPercent >= 70) {
-            // 가까이: 강한 반복 진동
-            vibrator.vibrate(VibrationEffect.createWaveform(
-                longArrayOf(0, duration, 150, duration, 150, duration),
-                intArrayOf(0, amplitude, 0, amplitude, 0, amplitude),
-                -1
-            ))
-        } else if (intensityPercent >= 30) {
-            // 중간: 2회 진동
-            vibrator.vibrate(VibrationEffect.createWaveform(
-                longArrayOf(0, duration, 200, duration),
-                intArrayOf(0, amplitude, 0, amplitude),
-                -1
-            ))
-        } else if (intensityPercent > 0) {
-            // 멀리: 1회 약한 진동
-            vibrator.vibrate(VibrationEffect.createOneShot(duration, amplitude))
+        when (zone) {
+            "IMMEDIATE" -> {
+                // 즉시근접: 100ms on/50ms off × 연속 반복 (최대 강도)
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                    longArrayOf(0, 100, 50, 100, 50, 100, 50, 100, 50, 100, 300),
+                    intArrayOf(0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0),
+                    0  // 처음부터 반복
+                ))
+            }
+            "NEAR" -> {
+                // 근처: 150ms × 3연타 + 2초 휴식, 반복
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                    longArrayOf(0, 150, 100, 150, 100, 150, 2000),
+                    intArrayOf(0, 200, 0, 200, 0, 200, 0),
+                    0  // 반복
+                ))
+            }
+            "FAR" -> {
+                // 멀리: 200ms × 2연타 + 5초 휴식, 반복
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                    longArrayOf(0, 200, 150, 200, 5000),
+                    intArrayOf(0, 150, 0, 150, 0),
+                    0  // 반복
+                ))
+            }
         }
     }
 }

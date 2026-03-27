@@ -11,33 +11,10 @@
         android:orientation="vertical"
         android:gravity="center_horizontal">
 
-        <!-- 로고 -->
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="12dp">
-
-            <TextView
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:background="#2E75B6"
-                android:text="SP"
-                android:textSize="11sp"
-                android:textColor="#FFFFFF"
-                android:textStyle="bold"
-                android:gravity="center" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=" SafePulse"
-                android:textSize="16sp"
-                android:textColor="#2E75B6"
-                android:textStyle="bold" />
-        </LinearLayout>
+        <!-- 상단 여백 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="8dp" />
 
         <TextView
             android:layout_width="match_parent"

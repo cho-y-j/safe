@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.*
 import android.util.Log
 import com.dainon.safepulse.BuildConfig
+import com.dainon.safepulse.phone.ui.EmergencyMapActivity
 import com.dainon.safepulse.phone.ui.MainActivity
 import com.google.gson.Gson
 import kotlinx.coroutines.*
@@ -31,6 +32,8 @@ class BridgeService : Service() {
 
         var lastWatchData: WatchData? = null
         var isWatchConnected = false
+        var lastEmergencyVibTime = 0L
+        var activeVibrator: Vibrator? = null  // MainActivity에서 cancel 가능
     }
 
     data class WatchData(
@@ -103,32 +106,64 @@ class BridgeService : Service() {
 
             val workerId = payload.substring(2, payload.length - 1)
             val status = payload.last().toString()
+            val prefs = getSharedPreferences("safepulse_companion", MODE_PRIVATE)
+            val myWorkerId = prefs.getString("workerId", "") ?: ""
+            val isMyWatch = myWorkerId.isNotBlank() && workerId == myWorkerId
 
-            isWatchConnected = true
-            lastWatchData = WatchData(workerId, status, result.rssi)
+            // BLE는 P2P 긴급 수신 전용 — 내 워치 상태는 Wearable Data Layer로만 수신
+            // (BLE 브로드캐스트는 모든 워치가 수신되므로 상태 표시에 사용하면 왔다갔다함)
 
-            // 긴급 신호 → 즉시 서버 전송
+            // 긴급 신호 처리
             if (status == "E") {
-                Log.w(TAG, "🚨 EMERGENCY from watch $workerId!")
+                val now = System.currentTimeMillis()
+
+                if (isMyWatch) {
+                    Log.w(TAG, "🚨 MY watch emergency: $workerId")
+                } else {
+                    Log.w(TAG, "🚨 OTHER worker emergency: $workerId (I am $myWorkerId)")
+                    // 즉시 MainActivity 실행 + P2P 카드 표시
+                    try {
+                        startActivity(Intent(this@BridgeService, com.dainon.safepulse.phone.ui.MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            putExtra("p2p_emergency", true)
+                            putExtra("workerId", workerId)
+                        })
+                    } catch (_: Exception) {}
+                    // 브로드캐스트도 전송 (화면 켜져 있을 때)
+                    sendBroadcast(Intent("com.dainon.safepulse.companion.P2P_EMERGENCY").apply {
+                        putExtra("workerId", workerId)
+                    })
+                    // 백그라운드로 서버 조회 → 지도 실행
+                    scope.launch { launchEmergencyMap(workerId) }
+                }
+
                 scope.launch { forwardEmergencyToServer(workerId) }
 
-                // 폰 진동
+                // 중복 진동 방지 (10초 이내 재수신 무시)
+                if (now - lastEmergencyVibTime < 10000) return
+                lastEmergencyVibTime = now
+
+                // 폰 진동 + 소리
                 val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
                 } else {
                     @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
                 }
+                activeVibrator = vibrator
                 vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 1000), -1))
+                // 비프음 (삐-삐-삐)
+                try {
+                    val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+                    for (i in 0 until 3) {
+                        android.os.Handler(mainLooper).postDelayed({
+                            try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200) } catch (_: Exception) {}
+                        }, (i * 400).toLong())
+                    }
+                    android.os.Handler(mainLooper).postDelayed({ try { toneGen.release() } catch (_: Exception) {} }, 1400)
+                } catch (_: Exception) {}
             }
 
-            // 브로드캐스트
-            sendBroadcast(Intent("com.dainon.safepulse.companion.WATCH_UPDATE").apply {
-                putExtra("workerId", workerId)
-                putExtra("status", status)
-                putExtra("rssi", result.rssi)
-            })
-
-            updateNotification("워치 $workerId 연결 | ${if (status == "N") "정상" else "🚨 긴급"}")
+            // BLE에서는 상태 브로드캐스트 안 함 (Wearable Data Layer에서만 상태 수신)
         }
     }
 
@@ -150,6 +185,48 @@ class BridgeService : Service() {
             Log.d(TAG, "Emergency forwarded to server")
         } catch (e: Exception) {
             Log.e(TAG, "Server forward failed: ${e.message}")
+        }
+    }
+
+    /** 타 작업자 긴급 → 서버에서 위치 조회 → 지도 Activity 실행 */
+    private suspend fun launchEmergencyMap(workerId: String) {
+        try {
+            // 서버에서 작업자 정보 + 위치 조회
+            val request = Request.Builder()
+                .url("$serverUrl/api/workers/$workerId")
+                .build()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: return
+                val data = gson.fromJson(body, Map::class.java) as? Map<String, Any> ?: return
+                val worker = data["worker"] as? Map<String, Any>
+
+                val name = worker?.get("name")?.toString() ?: workerId
+                val zone = worker?.get("zone")?.toString() ?: ""
+                val location = worker?.get("location")?.toString() ?: ""
+
+                // 최신 센서 데이터에서 위치 추출
+                val sensorHistory = data["sensorHistory"] as? List<Map<String, Any>>
+                val latest = sensorHistory?.firstOrNull()
+                val lat = (latest?.get("latitude") as? Number)?.toDouble() ?: 37.4602
+                val lng = (latest?.get("longitude") as? Number)?.toDouble() ?: 126.4407
+
+                Log.d(TAG, "Emergency worker location: $name at $lat, $lng ($zone)")
+
+                // Activity 실행 (FLAG_ACTIVITY_NEW_TASK: Service에서 시작)
+                val intent = Intent(this@BridgeService, EmergencyMapActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    putExtra("workerId", workerId)
+                    putExtra("workerName", name)
+                    putExtra("lat", lat)
+                    putExtra("lng", lng)
+                    putExtra("zone", "$location ($zone)")
+                    putExtra("distance", 0.0) // BLE 거리는 별도 계산
+                }
+                startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Emergency map launch failed: ${e.message}")
         }
     }
 

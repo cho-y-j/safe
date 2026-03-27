@@ -185,7 +185,9 @@ export function startWearableSimulator(io: SocketServer) {
             hrv: real.hrv || 50,
             lat: real.latitude || 37.4602,
             lng: real.longitude || 126.4407,
-            status: real.heartRate > 130 ? 'danger' : real.heartRate > 100 ? 'caution' : 'normal',
+            status: real.status === 'danger' || real.status === 'EMERGENCY' ? 'danger'
+              : real.status === 'caution' || real.status === 'WAITING_ACK' || real.status === 'FALL_DETECTED' ? 'caution'
+              : real.heartRate > 130 ? 'danger' : real.heartRate > 100 ? 'caution' : 'normal',
             alerts: [],
             fatigue: real.stress || 0,
             workMinutes: 0,
