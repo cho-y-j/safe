@@ -445,8 +445,9 @@ class SensorService : Service(), SensorEventListener {
 
                 // 2단계: 충격 감지 (자유낙하 후 2초 이내 큰 충격)
                 if (freeFallDetected && !impactDetected) {
-                    // HR=0이면 워치 벗는 중 → 낙상 아님
-                    if (heartRate <= 0 && heartRateZeroCount >= 2) {
+                    // HR=0 연속 5회 이상이면 워치 벗는 중 → 낙상 무시
+                    // 2회 이하는 일시적 → 낙상 판정 유지
+                    if (heartRate <= 0 && heartRateZeroCount >= 5) {
                         freeFallDetected = false
                         Log.d(TAG, "⌚ Fall ignored — HR=0, likely watch removal")
                     } else if (now - freeFallTime > FALL_WINDOW_MS) {
@@ -997,7 +998,8 @@ class SensorService : Service(), SensorEventListener {
             Log.d(TAG, "📈 User confirmed temp=$bodyTemp as normal")
         }
 
-        // P2P 경보 중이었다면 해제
+        // 연속 비프 정지 + P2P 경보 해제
+        stopEmergencyBeep()
         BleAlertService.cancelEmergency(this)
     }
 
@@ -1030,6 +1032,7 @@ class SensorService : Service(), SensorEventListener {
         currentState = WorkerState.NORMAL
         ackCooldownUntil = System.currentTimeMillis() + 30_000L
         monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
+        stopEmergencyBeep()
         BleAlertService.cancelEmergency(this)
         // 학습 안 함 — 센서 오류/일시적이라 베이스라인에 반영하지 않음
     }
@@ -1075,19 +1078,45 @@ class SensorService : Service(), SensorEventListener {
         playBeep(3)
     }
 
+    private var emergencyBeepHandler: Handler? = null
+    private var emergencyBeepRunnable: Runnable? = null
+
     private fun emergencyVibrate() {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else {
             @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
         }
-        // 강한 연속 진동 패턴
+        // 강한 연속 진동
         vibrator.vibrate(VibrationEffect.createWaveform(
-            longArrayOf(0, 500, 200, 500, 200, 1000), -1
+            longArrayOf(0, 500, 200, 500, 200, 500), 0  // 무한 반복
         ))
 
-        // 긴급 비프음 (삐-삐-삐)
-        playBeep(3)
+        // 최대 볼륨 연속 비프 (위치 찾기용 — 소리 방향으로 찾아감)
+        startEmergencyBeep()
+    }
+
+    /** 발신자(사고자) 최대 볼륨 연속 비프 — 500ms 비프 + 300ms 무음 반복 */
+    private fun startEmergencyBeep() {
+        stopEmergencyBeep()
+        val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
+        if (!prefs.getBoolean("soundEnabled", true)) return
+
+        emergencyBeepHandler = Handler(mainLooper)
+        val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+        emergencyBeepRunnable = object : Runnable {
+            override fun run() {
+                try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500) } catch (_: Exception) {}
+                emergencyBeepHandler?.postDelayed(this, 800)  // 500ms 비프 + 300ms 무음
+            }
+        }
+        emergencyBeepHandler?.post(emergencyBeepRunnable!!)
+    }
+
+    private fun stopEmergencyBeep() {
+        emergencyBeepRunnable?.let { emergencyBeepHandler?.removeCallbacks(it) }
+        emergencyBeepHandler = null
+        emergencyBeepRunnable = null
     }
 
     // ════════════════════════════════════════

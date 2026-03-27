@@ -91,13 +91,18 @@ class SetupActivity : AppCompatActivity() {
 
     private fun saveSettings(workerId: String, serverUrl: String, workType: String) {
         val id = workerId.ifBlank { "W-001" }
-        val url = serverUrl.ifBlank { "http://192.168.0.10:4000" }
+        val url = serverUrl.ifBlank { "http://192.168.0.9:4000" }
+
+        val vibEnabled = findViewById<android.widget.Switch>(R.id.switchVibration).isChecked
+        val soundEnabled = findViewById<android.widget.Switch>(R.id.switchSound).isChecked
 
         getSharedPreferences("safepulse", MODE_PRIVATE).edit()
             .putString("workerId", id)
             .putString("serverUrl", url)
             .putString("workType", workType)
             .putBoolean("setupDone", true)
+            .putBoolean("vibrationEnabled", vibEnabled)
+            .putBoolean("soundEnabled", soundEnabled)
             .apply()
 
         SensorService.WORKER_ID = id

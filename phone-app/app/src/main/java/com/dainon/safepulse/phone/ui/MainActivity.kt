@@ -189,6 +189,14 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
 
+        // 소리/진동 설정 Switch
+        val switchVib = findViewById<android.widget.Switch>(R.id.switchVibration)
+        val switchSound = findViewById<android.widget.Switch>(R.id.switchSound)
+        switchVib.isChecked = prefs.getBoolean("vibrationEnabled", true)
+        switchSound.isChecked = prefs.getBoolean("soundEnabled", true)
+        switchVib.setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("vibrationEnabled", checked).apply() }
+        switchSound.setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("soundEnabled", checked).apply() }
+
         // 레거시 확인 버튼
         btnAck.setOnClickListener {
             btnAck.visibility = View.GONE

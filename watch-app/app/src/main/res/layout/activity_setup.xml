@@ -145,6 +145,16 @@
             android:backgroundTint="#43A047"
             android:layout_marginBottom="6dp" />
 
+        <!-- 소리/진동 설정 -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="2dp">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="진동" android:textSize="10sp" android:textColor="#7A8FA3" />
+            <Switch android:id="@+id/switchVibration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="6dp">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="소리" android:textSize="10sp" android:textColor="#7A8FA3" />
+            <Switch android:id="@+id/switchSound" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+        </LinearLayout>
+
         <!-- 안내 -->
         <TextView
             android:layout_width="match_parent"

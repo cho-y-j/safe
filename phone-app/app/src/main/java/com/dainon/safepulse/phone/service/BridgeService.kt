@@ -106,6 +106,7 @@ class BridgeService : Service() {
 
             val workerId = payload.substring(2, payload.length - 1)
             val status = payload.last().toString()
+            Log.d(TAG, "BLE scan: $workerId status=$status RSSI=${result.rssi}")
             val prefs = getSharedPreferences("safepulse_companion", MODE_PRIVATE)
             val myWorkerId = prefs.getString("workerId", "") ?: ""
             val isMyWatch = myWorkerId.isNotBlank() && workerId == myWorkerId
@@ -143,7 +144,11 @@ class BridgeService : Service() {
                 if (now - lastEmergencyVibTime < 10000) return
                 lastEmergencyVibTime = now
 
-                // 폰 진동 + 소리
+                val vibEnabled = prefs.getBoolean("vibrationEnabled", true)
+                val soundEnabled = prefs.getBoolean("soundEnabled", true)
+
+                // 폰 진동 (설정 체크)
+                if (!vibEnabled && !soundEnabled) return
                 val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
                 } else {
@@ -274,6 +279,10 @@ class BridgeService : Service() {
     private fun updateNotification(text: String) {
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
             .notify(NOTIFICATION_ID, buildNotification(text))
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY  // 앱 종료 시 자동 재시작
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

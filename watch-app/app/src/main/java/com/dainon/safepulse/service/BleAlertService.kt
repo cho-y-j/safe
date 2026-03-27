@@ -249,11 +249,13 @@ object BleAlertService {
             val alertIntensity = calculateAlertIntensity(distance)
             val now = System.currentTimeMillis()
 
-            // 거리 구간 분류 (연구 기반: MobileHCI 2020)
+            // 5구간 거리 분류 (RSSI 기반)
             val zone = when {
-                rssi > -60 || distance < 10.0 -> "IMMEDIATE"
-                rssi > -75 || distance < 30.0 -> "NEAR"
-                else -> "FAR"
+                rssi > -50 || distance < 1.5 -> "ZONE1"    // ~1m 즉시
+                rssi > -60 || distance < 3.5 -> "ZONE2"    // ~3m 매우 가까움
+                rssi > -67 || distance < 6.0 -> "ZONE3"    // ~5m 가까움
+                rssi > -75 || distance < 12.0 -> "ZONE4"   // ~10m 중간
+                else -> "ZONE5"                              // 10m+ 멀리
             }
 
             // 중복 알림 방지: 같은 작업자 30초 이내 재수신이면 스킵
@@ -355,12 +357,10 @@ object BleAlertService {
      *
      * 핵심: inter-pulse interval이 긴급도 인지에 가장 효과적
      * - 즉시근접(<10m): 쉴 틈 없이 빠른 연속 → 즉시 행동
-     * - 근처(10-30m): 3연타 + 2초 휴식 → 높은 긴급도
-     * - 멀리(>30m): 2연타 + 5초 휴식 → 인지만
-     *
-     * 반복(repeat≥0)으로 사용자가 직접 해제해야 멈춤
+     * 5구간 거리별 진동 간격 (간격이 핵심, 세기는 모두 MAX)
+     * 가까울수록 빠르게, 멀수록 느리게
      */
-    private fun vibrateByDistance(context: Context, intensityPercent: Int, zone: String = "NEAR") {
+    private fun vibrateByDistance(context: Context, intensityPercent: Int, zone: String = "ZONE3") {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
             vm.defaultVibrator
@@ -368,33 +368,70 @@ object BleAlertService {
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
-        activeVibrator = vibrator  // dismiss 시 cancel 가능하도록 저장
+        activeVibrator = vibrator
+
+        // 설정 체크 (진동 끄기)
+        val prefs = context.applicationContext.getSharedPreferences("safepulse", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("vibrationEnabled", true)) return
 
         when (zone) {
-            "IMMEDIATE" -> {
-                // 즉시근접: 100ms on/50ms off × 연속 반복 (최대 강도)
+            "ZONE1" -> // ~1m: 100ms on, 50ms off 연속
                 vibrator.vibrate(VibrationEffect.createWaveform(
-                    longArrayOf(0, 100, 50, 100, 50, 100, 50, 100, 50, 100, 300),
-                    intArrayOf(0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0),
-                    0  // 처음부터 반복
-                ))
-            }
-            "NEAR" -> {
-                // 근처: 150ms × 3연타 + 2초 휴식, 반복
+                    longArrayOf(0, 100, 50), intArrayOf(0, 255, 0), 0))
+            "ZONE2" -> // ~3m: 200ms on, 300ms off
                 vibrator.vibrate(VibrationEffect.createWaveform(
-                    longArrayOf(0, 150, 100, 150, 100, 150, 2000),
-                    intArrayOf(0, 200, 0, 200, 0, 200, 0),
-                    0  // 반복
-                ))
-            }
-            "FAR" -> {
-                // 멀리: 200ms × 2연타 + 5초 휴식, 반복
+                    longArrayOf(0, 200, 300), intArrayOf(0, 255, 0), 0))
+            "ZONE3" -> // ~5m: 200ms on, 1초 off
                 vibrator.vibrate(VibrationEffect.createWaveform(
-                    longArrayOf(0, 200, 150, 200, 5000),
-                    intArrayOf(0, 150, 0, 150, 0),
-                    0  // 반복
-                ))
+                    longArrayOf(0, 200, 1000), intArrayOf(0, 255, 0), 0))
+            "ZONE4" -> // ~10m: 200ms on, 2초 off
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                    longArrayOf(0, 200, 2000), intArrayOf(0, 255, 0), 0))
+            "ZONE5" -> // 10m+: 200ms on, 4초 off
+                vibrator.vibrate(VibrationEffect.createWaveform(
+                    longArrayOf(0, 200, 4000), intArrayOf(0, 255, 0), 0))
+        }
+
+        // 거리별 비프음도 반복 (설정 체크)
+        if (prefs.getBoolean("soundEnabled", true)) {
+            startZoneBeep(context, zone)
+        }
+    }
+
+    /** 구간별 반복 비프음 */
+    private var beepHandler: android.os.Handler? = null
+    private var beepRunnable: Runnable? = null
+
+    private fun startZoneBeep(context: Context, zone: String) {
+        stopBeep()
+        val interval = when (zone) {
+            "ZONE1" -> 200L    // ~1m: 빠른 연속
+            "ZONE2" -> 500L    // ~3m
+            "ZONE3" -> 1000L   // ~5m
+            "ZONE4" -> 2000L   // ~10m
+            "ZONE5" -> 4000L   // 10m+
+            else -> 1000L
+        }
+        beepHandler = android.os.Handler(context.mainLooper)
+        val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
+        beepRunnable = object : Runnable {
+            override fun run() {
+                try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 150) } catch (_: Exception) {}
+                beepHandler?.postDelayed(this, interval)
             }
         }
+        beepHandler?.post(beepRunnable!!)
+    }
+
+    private fun stopBeep() {
+        beepRunnable?.let { beepHandler?.removeCallbacks(it) }
+        beepHandler = null
+        beepRunnable = null
+    }
+
+    /** 수신 경보 해제 시 비프도 정지 */
+    fun dismissReceivedAlertFull(workerId: String) {
+        dismissReceivedAlert(workerId)
+        stopBeep()
     }
 }

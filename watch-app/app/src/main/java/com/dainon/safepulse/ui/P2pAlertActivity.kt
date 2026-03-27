@@ -26,15 +26,13 @@ class P2pAlertActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.tvAlertName).text = workerName
 
-        val distText = when (zone) {
-            "IMMEDIATE" -> "⚡ ${"%.0f".format(distance)}m"
-            "NEAR" -> "📍 ${"%.0f".format(distance)}m"
-            else -> "📡 ${"%.0f".format(distance)}m"
-        }
+        val distText = "~${"%.0f".format(distance)}m"
         val distColor = when (zone) {
-            "IMMEDIATE" -> 0xFFFF1744.toInt()
-            "NEAR" -> 0xFFFFEB3B.toInt()
-            else -> 0xFFBDBDBD.toInt()
+            "ZONE1" -> 0xFFFF1744.toInt()   // 빨강
+            "ZONE2" -> 0xFFFF5722.toInt()   // 주황
+            "ZONE3" -> 0xFFFFEB3B.toInt()   // 노랑
+            "ZONE4" -> 0xFF42A5F5.toInt()   // 파랑
+            else -> 0xFFBDBDBD.toInt()       // 회색
         }
         findViewById<TextView>(R.id.tvAlertDistance).apply {
             text = distText
@@ -42,13 +40,13 @@ class P2pAlertActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.btnRespond).setOnClickListener {
-            BleAlertService.dismissReceivedAlert(workerId)
+            BleAlertService.dismissReceivedAlertFull(workerId)
             clearNotification()
             finish()
         }
 
         findViewById<Button>(R.id.btnCantHelp).setOnClickListener {
-            BleAlertService.dismissReceivedAlert(workerId)
+            BleAlertService.dismissReceivedAlertFull(workerId)
             clearNotification()
             finish()
         }
