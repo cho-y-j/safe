@@ -157,19 +157,20 @@ class SensorService : Service(), SensorEventListener {
     private var lastMeasuredHR = 0           // 이전 측정 심박 (급변 감지용)
 
     private fun getIntervalForLevel(level: MonitorLevel): Long = when (level) {
-        MonitorLevel.IDLE_REST -> 60000L      // 60초
-        MonitorLevel.ACTIVE -> 30000L         // 30초
-        MonitorLevel.CHANGE_DETECT -> 15000L  // 15초
-        MonitorLevel.ALERT_NEAR -> 5000L      // 5초
+        MonitorLevel.IDLE_REST -> 5000L       // 5초 (배터리 무관)
+        MonitorLevel.ACTIVE -> 5000L          // 5초
+        MonitorLevel.CHANGE_DETECT -> 3000L   // 3초
+        MonitorLevel.ALERT_NEAR -> 2000L      // 2초
         MonitorLevel.ALERT_OVER -> 1000L      // 1초
     }
 
+    // 서버 전송: 평상시 5분, 이벤트 시 즉시
     private fun getServerSendInterval(level: MonitorLevel): Int = when (level) {
-        MonitorLevel.IDLE_REST -> 5     // 5번 측정마다 = 5분
-        MonitorLevel.ACTIVE -> 4        // 4번 = 2분
-        MonitorLevel.CHANGE_DETECT -> 2 // 2번 = 30초
-        MonitorLevel.ALERT_NEAR -> 2    // 2번 = 10초
-        MonitorLevel.ALERT_OVER -> 1    // 매번 = 즉시
+        MonitorLevel.IDLE_REST -> 60    // 60번 × 5초 = 5분
+        MonitorLevel.ACTIVE -> 60      // 60번 × 5초 = 5분
+        MonitorLevel.CHANGE_DETECT -> 10 // 10번 × 3초 = 30초
+        MonitorLevel.ALERT_NEAR -> 5    // 5번 × 2초 = 10초
+        MonitorLevel.ALERT_OVER -> 1    // 매번 × 1초 = 즉시
     }
 
     private var serverSendCounter = 0
@@ -754,9 +755,6 @@ class SensorService : Service(), SensorEventListener {
 
     private fun evaluateState() {
         if (!baselineReady || heartRate <= 0) return
-
-        // P2P 수신 중 (주변에 사고자가 있을 때) 본인 이상 감지 보류
-        if (BleAlertService.isReceivingEmergency() && currentState == WorkerState.NORMAL) return
 
         val now = System.currentTimeMillis()
 
