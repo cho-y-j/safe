@@ -3,6 +3,8 @@ package com.dainon.safepulse.ui
 import android.app.NotificationManager
 import android.content.Intent
 import android.os.Bundle
+import android.os.PowerManager
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -16,8 +18,23 @@ import com.dainon.safepulse.service.SensorService
  */
 class AckAlertActivity : AppCompatActivity() {
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ★ 화면 꺼지지 않게 유지 (긴급 상황)
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+        )
+
+        // WakeLock으로 OS가 화면 끄는 것 방지
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "safepulse:ack_alert")
+        wakeLock?.acquire(5 * 60 * 1000L) // 최대 5분
+
         setContentView(R.layout.activity_ack_alert)
 
         val state = intent.getStringExtra("state") ?: "WAITING_ACK"
@@ -55,17 +72,32 @@ class AckAlertActivity : AppCompatActivity() {
             finish()
         }
 
-        // 즉시 호출 (바로 P2P + 서버 경보)
+        // 즉시 호출 (바로 P2P + 서버 경보) — 화면 유지! finish 안 함
         findViewById<Button>(R.id.btnEmergency).setOnClickListener {
             startService(Intent(this, SensorService::class.java).apply {
                 action = SensorService.ACTION_MANUAL_EMERGENCY
             })
-            clearNotification()
-            finish()
+            // ★ finish() 안 함 — EMERGENCY 중 화면 유지
+            // 제목을 "긴급 상황"으로 변경
+            findViewById<TextView>(R.id.tvAckTitle).apply {
+                text = "긴급 상황"
+                setTextColor(0xFFE53935.toInt())
+            }
         }
+    }
+
+    // ★ 뒤로가기 차단 — "괜찮아요"/"오작동 종료" 눌러야만 닫힘
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        // 무시 — 긴급 상황에서 뒤로가기로 나가면 안 됨
     }
 
     private fun clearNotification() {
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(998)
+    }
+
+    override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        super.onDestroy()
     }
 }

@@ -105,6 +105,42 @@ class WearableListenerService : com.google.android.gms.wearable.WearableListener
     }
 
     private fun handleStatus(json: String) {
+        // ★ 서버로 센서 데이터 중계 (워치 WiFi 없을 때 폰이 LTE로 대신 전송)
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val serverUrl = getSharedPreferences("safepulse_companion", MODE_PRIVATE)
+                    .getString("serverUrl", "http://192.168.0.10:4000") ?: return@launch
+
+                val type = object : TypeToken<Map<String, Any>>() {}.type
+                val data: Map<String, Any> = gson.fromJson(json, type)
+                val workerId = data["workerId"] ?: return@launch
+
+                // 워치 status 데이터를 서버 센서 API 형식으로 중계
+                val sensorPayload = mapOf(
+                    "heartRate" to (data["heartRate"] ?: 0),
+                    "spo2" to (data["spo2"] ?: 98),
+                    "bodyTemp" to (data["bodyTemp"] ?: 36.5),
+                    "stress" to (data["stress"] ?: 0),
+                    "status" to (data["state"]?.toString()?.let { state ->
+                        when (state) {
+                            "EMERGENCY" -> "danger"
+                            "FALL_DETECTED", "WAITING_ACK", "MILD_ANOMALY" -> "caution"
+                            else -> "normal"
+                        }
+                    } ?: "normal")
+                )
+
+                val request = Request.Builder()
+                    .url("$serverUrl/api/workers/$workerId/sensor")
+                    .post(gson.toJson(sensorPayload).toRequestBody("application/json".toMediaType()))
+                    .build()
+                client.newCall(request).execute()
+            } catch (e: Exception) {
+                Log.w(TAG, "Status relay to server failed: ${e.message}")
+            }
+        }
+
+        // 앱 UI에 전달
         sendBroadcast(Intent("com.dainon.safepulse.companion.WATCH_STATUS").apply {
             putExtra("data", json)
         })

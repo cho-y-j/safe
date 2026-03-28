@@ -50,8 +50,18 @@ class AlertService : Service() {
                                 alertHistory.subList(50, alertHistory.size).clear()
                             }
 
-                            // 새 알림 진동
+                            val myWorkerId = SensorService.WORKER_ID
+
                             for (alert in newAlerts) {
+                                // ★ danger 레벨은 전부 스킵
+                                // 긴급은 BLE P2P(수신자) + SensorService(발신자)가 처리
+                                // AlertService가 서버 danger를 가져오면 반복 진동만 발생
+                                if (alert.level == "danger") {
+                                    Log.d(TAG, "Skip danger alert (handled by BLE/Sensor): ${alert.message}")
+                                    continue
+                                }
+
+                                // 관제 메시지 또는 내 관련 알림만 진동+표시
                                 vibrateByLevel(alert.level)
                                 broadcastAlert(alert)
                                 Log.d(TAG, "New alert: [${alert.level}] ${alert.message}")

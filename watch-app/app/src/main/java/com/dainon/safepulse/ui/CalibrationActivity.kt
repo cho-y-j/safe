@@ -47,6 +47,7 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
 
     private val restSamples = mutableListOf<Int>()
     private val activeSamples = mutableListOf<Int>()
+    private val accelSamples = mutableListOf<Float>()  // ★ 가속도 베이스라인 학습
     private var currentHR = 0
     private var activitySum = 0f
     private var activityCount = 0
@@ -148,6 +149,8 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
                 val mag = sqrt(event.values[0] * event.values[0] + event.values[1] * event.values[1] + event.values[2] * event.values[2])
                 activitySum += abs(mag - 9.81f)
                 activityCount++
+                // ★ 가속도 베이스라인 수집 (100개마다 1개 샘플링 — 10분간 ~600개)
+                if (accelSamples.size < 2000) accelSamples.add(mag)
             }
         }
     }
@@ -194,18 +197,28 @@ class CalibrationActivity : AppCompatActivity(), SensorEventListener {
         val restMean = if (restSamples.size >= 3) restSamples.average().toInt() else 75
         val activeMean = if (activeSamples.size >= 3) activeSamples.average().toInt() else 95
 
+        // ★ 가속도 베이스라인 계산
+        val accelMean = if (accelSamples.size >= 50) accelSamples.average().toFloat() else 9.81f
+        val accelStd = if (accelSamples.size >= 50) {
+            val mean = accelSamples.average()
+            sqrt(accelSamples.map { ((it - mean) * (it - mean)).toFloat() }.average().toDouble()).toFloat().coerceAtLeast(1.0f)
+        } else 2.0f
+
         val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
         val alertRange = prefs.getInt("alertRangeUpper", 55)
         val upperAlert = restMean + alertRange
         val lowerAlert = (restMean - 30).coerceAtLeast(ABSOLUTE_MIN)
 
         Log.d(TAG, "✅ Complete! rest=$restMean(${restSamples.size}건), active=$activeMean(${activeSamples.size}건), alert=${upperAlert}↑/${lowerAlert}↓")
+        Log.d(TAG, "✅ Accel baseline: mean=${"%.1f".format(accelMean)}, std=${"%.1f".format(accelStd)}, samples=${accelSamples.size}")
 
         // 저장
         prefs.edit()
             .putInt("baselineHR", restMean)
             .putFloat("presetRestMean", restMean.toFloat())
             .putFloat("presetActiveMean", activeMean.toFloat())
+            .putFloat("accelMean", accelMean)        // ★ 가속도 평균
+            .putFloat("accelStd", accelStd)          // ★ 가속도 표준편차
             .putBoolean("baselineComplete", true)
             .putBoolean("calibrationDone", true)
             .apply()

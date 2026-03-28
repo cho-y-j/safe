@@ -54,6 +54,7 @@ object BleAlertService {
     private val activeEmergencyWorkers = mutableMapOf<String, Long>()
     private var currentZone = ""           // 현재 거리 구간 (실시간 추적)
     private var alertActivityLaunched = false  // P2pAlertActivity 실행 여부
+    @Volatile var isReceivingAlert = false  // ★ P2P 진동 수신 중 (SensorService에서 낙상 감지 차단용)
 
     // ════════════════════════════════════════
     // 광고 (Advertise) — 내 상태를 주변에 알림
@@ -134,6 +135,18 @@ object BleAlertService {
         Log.d(TAG, "Emergency cancelled, back to normal")
     }
 
+    /** 모든 BLE 활동 정지 (작업 종료 시) */
+    fun stopAll() {
+        try {
+            advertiser?.stopAdvertising(advertiseCallback)
+        } catch (_: SecurityException) {}
+        stopScanning()
+        isEmergency = false
+        lastEmergencyBroadcastTime = 0L
+        activeVibrator?.cancel()
+        Log.d(TAG, "All BLE stopped")
+    }
+
     /** 수신 경보 해제 (수신자가 "응답함" 또는 "도움불가" 탭) */
     fun dismissReceivedAlert(workerId: String) {
         suppressedWorkerIds.add(workerId)
@@ -181,9 +194,16 @@ object BleAlertService {
     // 스캔 (Scan) — 주변 워치 경보 수신
     // ════════════════════════════════════════
 
-    /** 주변 SafePulse 기기 스캔 시작 */
+    /** 주변 SafePulse 기기 스캔 시작 (기존 스캔 확실히 정리 후 재시작) */
     fun startScanning(context: Context) {
         try {
+            // ★ 기존 스캔 확실히 정리
+            if (scanCallbackInstance != null) {
+                try { scanner?.stopScan(scanCallbackInstance) } catch (_: Exception) {}
+                scanCallbackInstance = null
+            }
+            isScanning = false
+
             val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
             scanner = adapter.bluetoothLeScanner ?: return
 
@@ -203,17 +223,16 @@ object BleAlertService {
 
             scanner?.startScan(listOf(filter), settings, scanCallback(context))
             isScanning = true
-            Log.d(TAG, "BLE scan started")
+            Log.d(TAG, "BLE scan started (clean restart)")
         } catch (e: SecurityException) {
             Log.e(TAG, "BLE scan failed: ${e.message}")
         }
     }
 
     fun stopScanning() {
-        if (isScanning) {
-            scanner?.stopScan(scanCallbackInstance)
-            isScanning = false
-        }
+        try { scanner?.stopScan(scanCallbackInstance) } catch (_: Exception) {}
+        scanCallbackInstance = null
+        isScanning = false
     }
 
     private var scanCallbackInstance: ScanCallback? = null
@@ -290,45 +309,39 @@ object BleAlertService {
             // 3) P2pAlertActivity 첫 1회만 실행 (이후 브로드캐스트로 거리 갱신)
             if (!alertActivityLaunched) {
                 alertActivityLaunched = true
+                isReceivingAlert = true  // ★ 진동 시작 → 낙상 감지 차단
                 activeEmergencyWorkers[workerId] = now
                 vibrateByDistance(context, alertIntensity, zone)
+                // ★ SensorService(Foreground Service)를 통해 P2P 화면 발행
+                //   object에서 직접 notification 발행하면 fullScreenIntent 차단됨
                 try {
-                    val alertIntent = Intent(appCtx, com.dainon.safepulse.ui.P2pAlertActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    val launchIntent = Intent(appCtx, SensorService::class.java).apply {
+                        action = SensorService.ACTION_LAUNCH_P2P
                         putExtra("workerId", workerId)
                         putExtra("workerName", workerName)
                         putExtra("distance", distance)
                         putExtra("zone", zone)
                     }
-                    val pi = android.app.PendingIntent.getActivity(
-                        appCtx, 0, alertIntent,
-                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                    )
-                    val notification = androidx.core.app.NotificationCompat.Builder(appCtx, "safepulse_alert")
-                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                        .setContentTitle("주변 긴급")
-                        .setContentText("$workerName ${"%.1f".format(distance)}m")
-                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
-                        .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ALARM)
-                        .setFullScreenIntent(pi, true)
-                        .setAutoCancel(true)
-                        .setTimeoutAfter(1000)
-                        .build()
-                    val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                    nm.notify(999, notification)
+                    appCtx.startService(launchIntent)
+                    Log.d(TAG, "🚨 P2P alert → SensorService for $workerName")
                 } catch (e: Exception) {
-                    Log.e(TAG, "P2P alert failed: ${e.message}")
+                    Log.e(TAG, "P2P alert via SensorService failed: ${e.message}")
                 }
             }
         } else if (status == 'N') {
-            // 정상으로 복귀 → 진동 취소 + suppress 해제
+            // 정상으로 복귀 → 진동 취소 + suppress 해제 + P2P 화면 닫기
             if (workerId in activeEmergencyWorkers) {
                 activeVibrator?.cancel()
+                isReceivingAlert = false  // ★ 진동 종료
                 activeEmergencyWorkers.remove(workerId)
                 currentZone = ""
                 alertActivityLaunched = false
                 stopBeep()
-                Log.d(TAG, "Worker $workerId back to normal → vibration cancelled")
+                // ★ P2pAlertActivity 닫기 브로드캐스트
+                context.applicationContext.sendBroadcast(Intent("com.dainon.safepulse.CLOSE_P2P").apply {
+                    setPackage("com.dainon.safepulse")
+                })
+                Log.d(TAG, "Worker $workerId back to normal → vibration cancelled + P2P closed")
             }
             suppressedWorkerIds.remove(workerId)
             suppressedTimestamps.remove(workerId)

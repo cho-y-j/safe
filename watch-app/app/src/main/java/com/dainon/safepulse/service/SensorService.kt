@@ -46,6 +46,7 @@ class SensorService : Service(), SensorEventListener {
         const val ACTION_ACKNOWLEDGE = "com.dainon.safepulse.ACKNOWLEDGE"
         const val ACTION_MANUAL_EMERGENCY = "com.dainon.safepulse.MANUAL_EMERGENCY"
         const val ACTION_DISMISS = "com.dainon.safepulse.DISMISS"  // 오작동 종료 (학습 안 함)
+        const val ACTION_LAUNCH_P2P = "com.dainon.safepulse.LAUNCH_P2P"  // ★ P2P 화면 띄우기
     }
 
     private lateinit var sensorManager: SensorManager
@@ -98,20 +99,30 @@ class SensorService : Service(), SensorEventListener {
     private var lastSyncTime = 0L
     private val SYNC_INTERVAL_MS = 30 * 60 * 1000L  // 30분마다 서버 동기화
 
-    // ──── 낙상 감지 ────
+    // ──── 낙상 감지 (학습 기반 적응형) ────
     private var lastAccelMagnitude = 9.81f
-    private var freeFallDetected = false       // 자유낙하 감지
-    private var freeFallTime = 0L              // 자유낙하 시작 시각
+    private var freeFallDetected = false       // 떨어짐(가속도 감소) 감지
+    private var freeFallTime = 0L              // 떨어짐 시작 시각
     private var impactDetected = false         // 충격 감지
-    // 테스트용 낮은 임계값 (실전: FREE_FALL=3.0, IMPACT=25.0)
-    private val FREE_FALL_THRESHOLD = 5.0f     // 이 이하면 자유낙하 (완화)
-    private val IMPACT_THRESHOLD = 15.0f       // 이 이상이면 충격 (완화)
-    private val FALL_WINDOW_MS = 2000L         // 낙하→충격 2초 이내
+    private val FALL_WINDOW_MS = 3000L         // 떨어짐→충격 3초 이내
+    // ★ 학습 기반 적응형 임계값 (기기별 센서 차이 자동 보정)
+    private var accelBaselineMean = 9.81f      // 평상시 가속도 평균 (학습으로 업데이트)
+    private var accelBaselineStd = 2.0f        // 평상시 가속도 표준편차
+    private var fallThreshold = 7.0f           // 떨어짐 임계값 (mean - std*1.5)
+    private var impactThreshold = 18.0f        // 충격 임계값 (mean + std*4)
 
     // ──── 워치 탈착 감지 ────
     private var lastValidHeartRate = 0         // 마지막 유효 심박
     private var heartRateZeroCount = 0         // 연속 0 카운트
     private var wasAnomalyBeforeZero = false   // 0 되기 전 이상 상태였나
+
+    // ──── 워치 재착용 안정화 ────
+    private var stabilizingUntil = 0L          // 재착용 후 안정화 종료 시각
+    private val STABILIZE_DURATION_MS = 10_000L // 10초 안정화
+
+    // ──── 자동 작업 종료 ────
+    private var watchRemovedTime = 0L           // WATCH_REMOVED 진입 시각
+    private val AUTO_END_WORK_MS = 10 * 60 * 1000L  // 10분 후 자동 종료
 
     // ──── 상태 관리 (단계 2~4) ────
     enum class WorkerState {
@@ -178,7 +189,14 @@ class SensorService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
-        startForeground(NOTIFICATION_ID, buildStatusNotification("센서 초기화 중..."))
+        try {
+            startForeground(NOTIFICATION_ID, buildStatusNotification("센서 초기화 중..."))
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed (background restart?): ${e.message}")
+            // Android 12+ 백그라운드 제한 — 크래시 대신 조용히 종료
+            stopSelf()
+            return
+        }
 
         // 이전 베이스라인 복원 (프리셋 → 로컬 → 서버 순서)
         val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
@@ -251,12 +269,24 @@ class SensorService : Service(), SensorEventListener {
             }
         }
 
+        // ★ 가속도 베이스라인 로드 → 낙상 임계값 자동 설정
+        accelBaselineMean = prefs.getFloat("accelMean", 9.81f)
+        accelBaselineStd = prefs.getFloat("accelStd", 2.0f)
+        fallThreshold = (accelBaselineMean - accelBaselineStd * 1.5f).coerceIn(3.0f, 8.0f)
+        impactThreshold = (accelBaselineMean + accelBaselineStd * 4f).coerceIn(15.0f, 30.0f)
+        Log.d(TAG, "📐 Accel baseline: mean=${"%.1f".format(accelBaselineMean)}, std=${"%.1f".format(accelBaselineStd)} → fall<${"%.1f".format(fallThreshold)}, impact>${"%.1f".format(impactThreshold)}")
+
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         registerSensors()
         startHealthServices()
         startGPS()
         lastMovementTime = System.currentTimeMillis()
         startMonitoringLoop()
+
+        // ★ BLE 광고 + 스캔 시작 (MainActivity 안 열어도 P2P 수신 가능)
+        BleAlertService.startNormalAdvertise(this, WORKER_ID)
+        BleAlertService.startScanning(this)
+        Log.d(TAG, "✅ BLE started from SensorService: $WORKER_ID")
 
         // 폰에서 ACK 수신 (Wearable Data Layer)
         startPhoneAckListener()
@@ -441,29 +471,43 @@ class SensorService : Service(), SensorEventListener {
                     noMovementSeconds = 0
                 }
 
-                // ──── 낙상 감지 (자유낙하 → 충격 패턴) ────
-                val now = System.currentTimeMillis()
-
-                // 1단계: 자유낙하 감지 (가속도 ≈ 0)
-                if (magnitude < FREE_FALL_THRESHOLD && !freeFallDetected) {
-                    freeFallDetected = true
-                    freeFallTime = now
-                    Log.w(TAG, "⚡ Free fall detected! magnitude=${"%.1f".format(magnitude)}")
+                // ──── 낙상 감지 (떨어짐 → 충격 패턴) ────
+                // ★ 미착용 / P2P 진동 수신 중 / 쿨다운 → 낙상 감지 스킵
+                if (currentState == WorkerState.WATCH_REMOVED
+                    || BleAlertService.isReceivingAlert) {  // 진동이 가속도계 오염
+                    lastAccelMagnitude = magnitude
+                    return
                 }
 
-                // 2단계: 충격 감지 (자유낙하 후 2초 이내 큰 충격)
+                val now = System.currentTimeMillis()
+
+                if (now < stabilizingUntil || now < ackCooldownUntil) {
+                    lastAccelMagnitude = magnitude
+                    return
+                }
+
+                // 1단계: 떨어짐 감지 (magnitude가 학습된 임계값 이하로 떨어짐)
+                // ★ HR>0 (착용 확인) + 이전값이 정상 범위 (진동 노이즈 필터)
+                if (magnitude < fallThreshold && !freeFallDetected
+                    && heartRate > 0 && lastAccelMagnitude > fallThreshold) {
+                    freeFallDetected = true
+                    freeFallTime = now
+                    Log.w(TAG, "⚡ Fall dip! mag=${"%.1f".format(magnitude)} < threshold=${"%.1f".format(fallThreshold)}, lastMag=${"%.1f".format(lastAccelMagnitude)}")
+                }
+
+                // 2단계: 충격 감지 (떨어짐 후 3초 이내 큰 충격)
                 if (freeFallDetected && !impactDetected) {
-                    // HR=0 연속 5회 이상이면 워치 벗는 중 → 낙상 무시
-                    // 2회 이하는 일시적 → 낙상 판정 유지
                     if (heartRate <= 0 && heartRateZeroCount >= 5) {
                         freeFallDetected = false
                         Log.d(TAG, "⌚ Fall ignored — HR=0, likely watch removal")
+                    } else if (now - freeFallTime < 50L) {
+                        // 최소 50ms 경과 필요 (진동 스파이크 필터)
                     } else if (now - freeFallTime > FALL_WINDOW_MS) {
                         // 2초 지나면 리셋 (낙상 아님)
                         freeFallDetected = false
-                    } else if (magnitude > IMPACT_THRESHOLD) {
+                    } else if (magnitude > impactThreshold) {
                         impactDetected = true
-                        Log.w(TAG, "💥 FALL IMPACT! magnitude=${"%.1f".format(magnitude)}, time=${now - freeFallTime}ms")
+                        Log.w(TAG, "💥 FALL IMPACT! mag=${"%.1f".format(magnitude)} > threshold=${"%.1f".format(impactThreshold)}, time=${now - freeFallTime}ms")
 
                         // 낙상 감지 → 5초 확인 대기
                         if (currentState != WorkerState.EMERGENCY) {
@@ -491,7 +535,7 @@ class SensorService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    /** 심박 0 처리 */
+    /** 심박 0 처리 — EMERGENCY/FALL_DETECTED만 위험, 나머지는 전부 WATCH_REMOVED */
     private fun handleHeartRateZero() {
         // 이미 WATCH_REMOVED면 절전 진입 체크
         if (currentState == WorkerState.WATCH_REMOVED) {
@@ -502,26 +546,37 @@ class SensorService : Service(), SensorEventListener {
             return
         }
 
-        val wasAnomaly = currentState == WorkerState.MILD_ANOMALY ||
-            currentState == WorkerState.WAITING_ACK ||
-            currentState == WorkerState.FALL_DETECTED
-
-        wasAnomalyBeforeZero = wasAnomaly
-
-        if (wasAnomaly) {
-            // 이상 상태에서 심박 0 → 위험 가능성
-            Log.w(TAG, "⚠ HR=0 during anomaly ($currentState) → asking first")
-            currentState = WorkerState.WAITING_ACK
-            ackWaitStartTime = System.currentTimeMillis()
-            monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
-            notifyWorker("심박 감지가 안 됩니다. 괜찮으시면 확인을 눌러주세요!")
-        } else {
-            // 정상에서 심박 0 → 워치 벗음 (조용히)
-            Log.d(TAG, "⌚ HR=0 from normal → watch removed")
-            currentState = WorkerState.WATCH_REMOVED
-            monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
-            heartRate = 0
+        // ★ EMERGENCY 중 HR=0 → 의식 잃고 워치 빠짐 가능 → EMERGENCY 유지
+        if (currentState == WorkerState.EMERGENCY) {
+            Log.w(TAG, "🚨 HR=0 during EMERGENCY → keeping EMERGENCY (unconscious?)")
+            return
         }
+
+        // ★ FALL_DETECTED 중 HR=0 → 낙상 후 워치 이탈 가능 → 기존 타이머로 판단
+        //    (evaluateState에서 ACK_TIMEOUT_SEC 후 EMERGENCY 전환)
+        if (currentState == WorkerState.FALL_DETECTED) {
+            Log.w(TAG, "⚠ HR=0 during FALL_DETECTED → letting fall timer decide")
+            return
+        }
+
+        // ★ 그 외 모든 상태 → WATCH_REMOVED (조용히, 경보 없음)
+        val prevState = currentState
+        Log.d(TAG, "⌚ HR=0 from $prevState → watch removed (silent)")
+
+        // 진동/비프 즉시 정지
+        isEmergencyAlarmActive = false
+        emergencyVibrator?.cancel()
+        stopEmergencyBeep()
+
+        // 경보 중이었다면 BLE 해제
+        if (prevState == WorkerState.MILD_ANOMALY || prevState == WorkerState.WAITING_ACK) {
+            BleAlertService.cancelEmergency(this)
+        }
+
+        currentState = WorkerState.WATCH_REMOVED
+        watchRemovedTime = System.currentTimeMillis()  // 자동종료 타이머 시작
+        monitorIntervalMs = 10_000L  // 10초 간격 (최저 전력, HR복귀 감지용)
+        heartRate = 0
     }
 
     // ════════════════════════════════════════
@@ -580,6 +635,22 @@ class SensorService : Service(), SensorEventListener {
 
             while (isActive) {
                 delay(monitorIntervalMs)
+
+                // ★ WATCH_REMOVED 상태면 최소한만 실행 (최저 전력)
+                if (currentState == WorkerState.WATCH_REMOVED) {
+                    noMovementSeconds = ((System.currentTimeMillis() - lastMovementTime) / 1000).toInt()
+
+                    // 자동 작업 종료 체크 (10분 미착용)
+                    if (watchRemovedTime > 0 && System.currentTimeMillis() - watchRemovedTime >= AUTO_END_WORK_MS) {
+                        broadcastAutoEndWork()
+                        watchRemovedTime = 0L  // 1회만
+                    }
+
+                    evaluateState()      // HR>0 복귀 감지용
+                    broadcastStatus()    // UI "미착용" 표시
+                    monitorIntervalMs = 10_000L  // 10초 간격 유지
+                    continue  // updateBaseline, updateMonitorLevel, sendToServer 전부 스킵
+                }
 
                 // 무움직임 시간 갱신
                 noMovementSeconds = ((System.currentTimeMillis() - lastMovementTime) / 1000).toInt()
@@ -754,12 +825,39 @@ class SensorService : Service(), SensorEventListener {
     // ════════════════════════════════════════
 
     private fun evaluateState() {
-        if (!baselineReady || heartRate <= 0) return
+        // ★ WATCH_REMOVED에서는 HR>0 복귀만 감지 (heartRate<=0이어도 실행)
+        if (currentState == WorkerState.WATCH_REMOVED) {
+            if (heartRate > 0) {
+                Log.d(TAG, "⌚ Watch back on! HR=$heartRate")
+                heartRateZeroCount = 0
+                watchRemovedTime = 0L  // 자동종료 타이머 리셋
+
+                // 10초 안정화 구간 설정 (불안정한 센서값으로 오경보 방지)
+                stabilizingUntil = System.currentTimeMillis() + STABILIZE_DURATION_MS
+                currentState = WorkerState.NORMAL
+                monitorIntervalMs = getIntervalForLevel(MonitorLevel.ACTIVE)
+
+                // MainActivity에 알림 (작업 시작 화면 or 안정화 표시)
+                broadcastWatchBackOn()
+            }
+            return
+        }
+
+        // ★ HR=0이어도 FALL_DETECTED/EMERGENCY는 타이머 진행 필요
+        val hrZeroButTimerNeeded = heartRate <= 0 &&
+            (currentState == WorkerState.FALL_DETECTED || currentState == WorkerState.EMERGENCY)
+        if (!baselineReady || (heartRate <= 0 && !hrZeroButTimerNeeded)) return
 
         val now = System.currentTimeMillis()
 
         when (currentState) {
             WorkerState.NORMAL -> {
+                // ★ 안정화 구간이면 이상 감지 스킵 (재착용 후 10초)
+                if (now < stabilizingUntil) {
+                    Log.d(TAG, "🔄 Stabilizing... skip anomaly check (HR=$heartRate)")
+                    return
+                }
+
                 // 연구 기반 ± 범위 경보 (NIOSH HRR%, PMC 실측)
                 val upperLimit = restHrMean + alertRangeUpper  // 상한
                 val lowerLimit = restHrMean - alertRangeLower  // 하한
@@ -846,13 +944,7 @@ class SensorService : Service(), SensorEventListener {
             }
 
             WorkerState.WATCH_REMOVED -> {
-                // 워치 벗은 상태 — 다시 착용하면 복귀
-                if (heartRate > 0) {
-                    Log.d(TAG, "⌚ Watch back on! HR=$heartRate → NORMAL")
-                    currentState = WorkerState.NORMAL
-                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
-                    heartRateZeroCount = 0
-                }
+                // 함수 상단에서 이미 처리됨 (HR>0 복귀 감지 + 안정화)
             }
 
             WorkerState.ACKNOWLEDGED -> {
@@ -895,14 +987,8 @@ class SensorService : Service(), SensorEventListener {
             }
 
             WorkerState.EMERGENCY -> {
-                // ACK 쿨다운 중이면 즉시 ACKNOWLEDGED로 전환 (재에스컬레이션 방지)
-                if (now < ackCooldownUntil) {
-                    currentState = WorkerState.ACKNOWLEDGED
-                    monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_NEAR)
-                    BleAlertService.cancelEmergency(this)
-                    Log.d(TAG, "ACK cooldown active — back to ACKNOWLEDGED")
-                    return
-                }
+                // ★ EMERGENCY에서는 쿨다운 무시 — 진짜 응급 상황에서 자동 해제되면 안 됨
+                // 쿨다운은 NORMAL/ACKNOWLEDGED에서 재트리거 방지용으로만 작동
 
                 // 🚨 단계 5: P2P BLE 경보 + 서버 알림
                 monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
@@ -912,25 +998,8 @@ class SensorService : Service(), SensorEventListener {
                     isEmergencyAlarmActive = true
                     Log.w(TAG, "🚨 EMERGENCY START: HR=$heartRate, SpO2=$spo2")
 
-                    // AckAlertActivity (CLEAR_TOP으로 MainActivity 위에)
-                    try {
-                        val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            putExtra("state", "EMERGENCY")
-                        }
-                        val pi = PendingIntent.getActivity(this, 1, ackIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-                            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                            .setContentTitle("긴급 상황")
-                            .setPriority(NotificationCompat.PRIORITY_MAX)
-                            .setCategory(NotificationCompat.CATEGORY_ALARM)
-                            .setFullScreenIntent(pi, true)
-                            .setAutoCancel(true)
-                            .setTimeoutAfter(1000)
-                            .build()
-                        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
-                    } catch (_: Exception) {}
+                    // ★ fullScreenIntent로 AckAlertActivity 시작
+                    launchAlertActivity("EMERGENCY", "긴급 상황 — 주변에 경보 전파 중")
 
                     // P2P BLE 경보
                     BleAlertService.broadcastEmergency(this, WORKER_ID)
@@ -1016,6 +1085,14 @@ class SensorService : Service(), SensorEventListener {
             ACTION_ACKNOWLEDGE -> onAcknowledge()
             ACTION_MANUAL_EMERGENCY -> onManualEmergency()
             ACTION_DISMISS -> onDismiss()
+            ACTION_LAUNCH_P2P -> {
+                // ★ BleAlertService에서 요청 → Foreground Service에서 P2P 화면 발행
+                val workerId = intent.getStringExtra("workerId") ?: "?"
+                val workerName = intent.getStringExtra("workerName") ?: workerId
+                val distance = intent.getDoubleExtra("distance", 99.0)
+                val zone = intent.getStringExtra("zone") ?: "ZONE3"
+                launchP2pAlert(workerName, workerId, distance, zone)
+            }
         }
         return START_STICKY
     }
@@ -1036,9 +1113,10 @@ class SensorService : Service(), SensorEventListener {
 
     /** 오작동 종료 (학습 안 함 + 경보 해제) */
     private fun onDismiss() {
-        Log.d(TAG, "⏹ Dismissed — no learning")
+        Log.d(TAG, "⏹ Dismissed — no learning, 60s cooldown")
         currentState = WorkerState.NORMAL
-        ackCooldownUntil = System.currentTimeMillis() + 30_000L
+        ackCooldownUntil = System.currentTimeMillis() + 60_000L  // 60초 재트리거 방지
+        stabilizingUntil = System.currentTimeMillis() + 60_000L  // 60초간 이상감지 완전 스킵
         monitorIntervalMs = getIntervalForLevel(MonitorLevel.IDLE_REST)
         isEmergencyAlarmActive = false
         emergencyVibrator?.cancel()
@@ -1051,6 +1129,57 @@ class SensorService : Service(), SensorEventListener {
     // 알림 + 진동
     // ════════════════════════════════════════
 
+    /** ★ fullScreenIntent로 화면 자동 켜기 + Activity 시작 (Wear OS 공식 방법) */
+    private fun launchAlertActivity(state: String, message: String) {
+        val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("state", state)
+            putExtra("message", message)
+        }
+        val pi = PendingIntent.getActivity(this, System.currentTimeMillis().toInt(), ackIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(if (state == "EMERGENCY") "긴급 상황" else "이상 감지")
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setFullScreenIntent(pi, true)
+            .setOngoing(true)          // ★ 사라지지 않게
+            // setTimeoutAfter 없음!   // ★ 이게 원흉이었음
+            .build()
+
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
+        Log.d(TAG, "🚨 Alert notification posted: state=$state")
+    }
+
+    /** ★ P2P 수신 화면 — Foreground Service에서 fullScreenIntent 발행 (BleAlertService 대신) */
+    private fun launchP2pAlert(workerName: String, workerId: String, distance: Double, zone: String) {
+        val alertIntent = Intent(this, com.dainon.safepulse.ui.P2pAlertActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("workerId", workerId)
+            putExtra("workerName", workerName)
+            putExtra("distance", distance)
+            putExtra("zone", zone)
+        }
+        val pi = PendingIntent.getActivity(this, System.currentTimeMillis().toInt(), alertIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("주변 긴급")
+            .setContentText("$workerName ${"%.1f".format(distance)}m")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setFullScreenIntent(pi, true)
+            .setOngoing(true)
+            .build()
+
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(999, notification)
+        Log.d(TAG, "🚨 P2P alert notification posted from ForegroundService: $workerName")
+    }
+
     private fun notifyWorker(message: String) {
         // 진동
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1060,29 +1189,8 @@ class SensorService : Service(), SensorEventListener {
         }
         vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
 
-        // fullScreenIntent로 AckAlertActivity 실행 (BAL_BLOCK 우회)
-        try {
-            val ackIntent = Intent(this, com.dainon.safepulse.ui.AckAlertActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                putExtra("state", currentState.name)
-                putExtra("message", message)
-            }
-            val pi = PendingIntent.getActivity(this, 1, ackIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
-            val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentTitle("이상 감지")
-                .setContentText(message)
-                .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setFullScreenIntent(pi, true)
-                .setAutoCancel(true)
-                .setTimeoutAfter(1000)
-                .build()
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(998, notification)
-        } catch (_: Exception) {}
+        // ★ fullScreenIntent로 화면 켜기 + AckAlertActivity 시작
+        launchAlertActivity(currentState.name, message)
 
         // 비프음
         playBeep(3)
@@ -1214,6 +1322,34 @@ class SensorService : Service(), SensorEventListener {
         // 안정 평균 대비 얼마나 벗어났는지 = 스트레스
         val diff = abs(heartRate - restHrMean)
         return ((diff / alertRangeUpper) * 100).toInt().coerceIn(0, 100)
+    }
+
+    // ════════════════════════════════════════
+    // 자동 작업 종료 + 재착용 브로드캐스트
+    // ════════════════════════════════════════
+
+    /** 자동 작업 종료 브로드캐스트 (10분 미착용) */
+    private fun broadcastAutoEndWork() {
+        sendBroadcast(Intent("com.dainon.safepulse.AUTO_END_WORK").apply {
+            setPackage("com.dainon.safepulse")
+        })
+        // 서버에 offline 1회 전송
+        scope.launch {
+            try {
+                ServerClient.sendSensorData(SensorPayload(
+                    workerId = WORKER_ID, heartRate = 0, spo2 = 0, bodyTemp = 0.0,
+                    stress = 0, latitude = latitude, longitude = longitude, status = "offline"
+                ))
+            } catch (_: Exception) {}
+        }
+        Log.d(TAG, "📴 Auto end work broadcast sent (10min watch removed)")
+    }
+
+    /** 워치 재착용 브로드캐스트 */
+    private fun broadcastWatchBackOn() {
+        sendBroadcast(Intent("com.dainon.safepulse.WATCH_BACK_ON").apply {
+            setPackage("com.dainon.safepulse")
+        })
     }
 
     // ════════════════════════════════════════

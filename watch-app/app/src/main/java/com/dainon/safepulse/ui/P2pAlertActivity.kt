@@ -3,6 +3,8 @@ package com.dainon.safepulse.ui
 import android.app.NotificationManager
 import android.content.*
 import android.os.Bundle
+import android.os.PowerManager
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -17,6 +19,7 @@ import com.dainon.safepulse.service.BleAlertService
 class P2pAlertActivity : AppCompatActivity() {
 
     private var currentWorkerId = "?"
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // 거리 실시간 갱신 브로드캐스트 수신
     private val distanceReceiver = object : BroadcastReceiver() {
@@ -27,8 +30,28 @@ class P2pAlertActivity : AppCompatActivity() {
         }
     }
 
+    // ★ 발신자 경보 해제 시 자동 닫기
+    private val closeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            android.util.Log.d("P2pAlert", "경보 해제 → 화면 닫기")
+            clearNotification()
+            finish()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ★ 화면 꺼지지 않게 유지 (긴급 상황)
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+        )
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "safepulse:p2p_alert")
+        wakeLock?.acquire(5 * 60 * 1000L)
+
         setContentView(R.layout.activity_p2p_alert)
 
         currentWorkerId = intent.getStringExtra("workerId") ?: "?"
@@ -52,6 +75,12 @@ class P2pAlertActivity : AppCompatActivity() {
         }
     }
 
+    // ★ 뒤로가기 차단 — "응답함"/"도움불가" 눌러야만 닫힘
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        // 무시
+    }
+
     private fun updateDistance(distance: Double, zone: String) {
         val distText = "~${"%.0f".format(distance)}m"
         val distColor = when (zone) {
@@ -70,14 +99,21 @@ class P2pAlertActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         registerReceiver(distanceReceiver, IntentFilter("com.dainon.safepulse.P2P_DISTANCE"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(closeReceiver, IntentFilter("com.dainon.safepulse.CLOSE_P2P"), RECEIVER_NOT_EXPORTED)
     }
 
     override fun onPause() {
         super.onPause()
         try { unregisterReceiver(distanceReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     }
 
     private fun clearNotification() {
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(999)
+    }
+
+    override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        super.onDestroy()
     }
 }

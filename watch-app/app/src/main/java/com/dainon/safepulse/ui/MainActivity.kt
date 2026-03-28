@@ -153,6 +153,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ★ 자동 작업 종료 수신기 (10분 미착용)
+    private val autoEndWorkReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            android.util.Log.d("MainActivity", "📴 Auto end work received")
+            if (workMode != WorkMode.IDLE) {
+                endWork()
+                alertBanner.visibility = View.VISIBLE
+                alertBanner.setBackgroundColor(0xFF5A7A96.toInt())
+                tvLastAlert.text = "워치 미착용 10분 → 작업 자동 종료"
+            }
+        }
+    }
+
+    // ★ 워치 재착용 수신기
+    private val watchBackOnReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            android.util.Log.d("MainActivity", "⌚ Watch back on!")
+            if (workMode == WorkMode.IDLE) {
+                showIdleView()
+                alertBanner.visibility = View.VISIBLE
+                alertBanner.setBackgroundColor(0xFF43A047.toInt())
+                tvLastAlert.text = "워치 착용 감지 — 작업 시작을 눌러주세요"
+            } else if (workMode == WorkMode.WORKING) {
+                alertBanner.visibility = View.VISIBLE
+                alertBanner.setBackgroundColor(0xFF1E88E5.toInt())
+                tvLastAlert.text = "센서 안정화 중 (10초)..."
+            }
+        }
+    }
+
     private val p2pReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val workerId = intent.getStringExtra("workerId") ?: "?"
@@ -305,19 +335,30 @@ class MainActivity : AppCompatActivity() {
         // 이전 상태 복원
         val prefs = getSharedPreferences("safepulse", MODE_PRIVATE)
         isBaselineComplete = prefs.getBoolean("baselineComplete", false)
-        val savedWorkMode = prefs.getString("workMode", "IDLE")
+        var savedWorkMode = prefs.getString("workMode", "IDLE")
         workStartTime = prefs.getLong("workStartTime", 0L)
         totalWorkMs = prefs.getLong("totalWorkMs", 0L)
+
+        // ★ 서비스가 죽어있으면 IDLE로 강제 전환 (10분 자동종료 못한 경우)
+        val sensorRunning = try {
+            val manager = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            manager.getRunningServices(100).any { it.service.className == "com.dainon.safepulse.service.SensorService" }
+        } catch (_: Exception) { false }
+
+        if (savedWorkMode != "IDLE" && !sensorRunning) {
+            android.util.Log.d("MainActivity", "서비스 죽어있음 → IDLE 강제 전환")
+            savedWorkMode = "IDLE"
+            prefs.edit().putString("workMode", "IDLE").apply()
+        }
 
         when (savedWorkMode) {
             "WORKING" -> {
                 workMode = WorkMode.WORKING
                 showWorkingView()
-                // 앱 재시작 시 서비스도 복원
-                requestPermissions()  // 내부에서 startBle + startServices 호출
+                requestPermissions()
                 loadAIInsight()
                 startTimerLoop()
-                return  // requestPermissions 중복 방지
+                return
             }
             "RESTING" -> { restStartTime = prefs.getLong("restStartTime", System.currentTimeMillis()); workMode = WorkMode.RESTING; showRestingView() }
             else -> showIdleView()
@@ -439,6 +480,12 @@ class MainActivity : AppCompatActivity() {
         getSharedPreferences("safepulse", MODE_PRIVATE).edit()
             .putString("workMode", "IDLE")
             .apply()
+
+        // ★ 서비스 완전 정지 — 워치 벗으면 BLE도 정지 (동료 위험은 폰이 수신)
+        stopService(Intent(this, SensorService::class.java))
+        stopService(Intent(this, AlertService::class.java))
+        BleAlertService.stopAll()
+
         showIdleView()
     }
 
@@ -664,6 +711,8 @@ class MainActivity : AppCompatActivity() {
         registerReceiver(sensorReceiver, IntentFilter("com.dainon.safepulse.SENSOR_UPDATE"), RECEIVER_NOT_EXPORTED)
         registerReceiver(alertReceiver, IntentFilter("com.dainon.safepulse.NEW_ALERT"), RECEIVER_NOT_EXPORTED)
         registerReceiver(p2pReceiver, IntentFilter("com.dainon.safepulse.P2P_ALERT"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(autoEndWorkReceiver, IntentFilter("com.dainon.safepulse.AUTO_END_WORK"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(watchBackOnReceiver, IntentFilter("com.dainon.safepulse.WATCH_BACK_ON"), RECEIVER_NOT_EXPORTED)
     }
 
     override fun onPause() {
@@ -671,6 +720,8 @@ class MainActivity : AppCompatActivity() {
         try { unregisterReceiver(sensorReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(alertReceiver) } catch (_: Exception) {}
         // p2pReceiver는 해제하지 않음 (화면 꺼져도 수신)
+        try { unregisterReceiver(autoEndWorkReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(watchBackOnReceiver) } catch (_: Exception) {}
     }
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
