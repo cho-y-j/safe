@@ -401,6 +401,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ★ 긴급 카드 표시 중 뒤로가기 차단
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (isEmergencyActive || findViewById<android.widget.LinearLayout>(R.id.p2pCard).visibility == View.VISIBLE) {
+            // 긴급 중에는 뒤로가기 무시
+            return
+        }
+        super.onBackPressed()
+    }
+
     override fun onDestroy() {
         try { Wearable.getMessageClient(this).removeListener(messageListener) } catch (_: Exception) {}
         scope.cancel()

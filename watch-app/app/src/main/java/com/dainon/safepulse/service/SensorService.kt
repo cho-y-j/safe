@@ -104,7 +104,7 @@ class SensorService : Service(), SensorEventListener {
     private var freeFallDetected = false       // 떨어짐(가속도 감소) 감지
     private var freeFallTime = 0L              // 떨어짐 시작 시각
     private var impactDetected = false         // 충격 감지
-    private val FALL_WINDOW_MS = 3000L         // 떨어짐→충격 3초 이내
+    private val FALL_WINDOW_MS = 1000L         // 떨어짐→충격 1초 이내 (실제 낙상 0.3~0.5초)
     // ★ 학습 기반 적응형 임계값 (기기별 센서 차이 자동 보정)
     private var accelBaselineMean = 9.81f      // 평상시 가속도 평균 (학습으로 업데이트)
     private var accelBaselineStd = 2.0f        // 평상시 가속도 표준편차
@@ -273,7 +273,7 @@ class SensorService : Service(), SensorEventListener {
         accelBaselineMean = prefs.getFloat("accelMean", 9.81f)
         accelBaselineStd = prefs.getFloat("accelStd", 2.0f)
         fallThreshold = (accelBaselineMean - accelBaselineStd * 1.5f).coerceIn(3.0f, 8.0f)
-        impactThreshold = (accelBaselineMean + accelBaselineStd * 4f).coerceIn(15.0f, 30.0f)
+        impactThreshold = (accelBaselineMean + accelBaselineStd * 4f).coerceIn(12.0f, 30.0f)  // 최소 12 (센서 민감도 낮은 기기 대응)
         Log.d(TAG, "📐 Accel baseline: mean=${"%.1f".format(accelBaselineMean)}, std=${"%.1f".format(accelBaselineStd)} → fall<${"%.1f".format(fallThreshold)}, impact>${"%.1f".format(impactThreshold)}")
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager

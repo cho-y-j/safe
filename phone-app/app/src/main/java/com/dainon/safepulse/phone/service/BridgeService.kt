@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.*
 import android.util.Log
 import com.dainon.safepulse.BuildConfig
-import com.dainon.safepulse.phone.ui.EmergencyMapActivity
 import com.dainon.safepulse.phone.ui.MainActivity
 import com.google.gson.Gson
 import kotlinx.coroutines.*
@@ -28,12 +27,14 @@ class BridgeService : Service() {
     companion object {
         const val TAG = "BridgeService"
         const val CHANNEL_ID = "safepulse_bridge"
+        const val CHANNEL_ALERT = "safepulse_p2p_alert"  // ★ P2P 긴급 알림 채널
         const val NOTIFICATION_ID = 100
+        const val P2P_NOTIFICATION_ID = 200  // ★ P2P 긴급 알림 ID
 
         var lastWatchData: WatchData? = null
         var isWatchConnected = false
         var lastEmergencyVibTime = 0L
-        var activeVibrator: Vibrator? = null  // MainActivity에서 cancel 가능
+        var activeVibrator: Vibrator? = null
     }
 
     data class WatchData(
@@ -122,20 +123,15 @@ class BridgeService : Service() {
                     Log.w(TAG, "🚨 MY watch emergency: $workerId")
                 } else {
                     Log.w(TAG, "🚨 OTHER worker emergency: $workerId (I am $myWorkerId)")
-                    // 즉시 MainActivity 실행 + P2P 카드 표시
-                    try {
-                        startActivity(Intent(this@BridgeService, com.dainon.safepulse.phone.ui.MainActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            putExtra("p2p_emergency", true)
-                            putExtra("workerId", workerId)
-                        })
-                    } catch (_: Exception) {}
-                    // 브로드캐스트도 전송 (화면 켜져 있을 때)
+
+                    // ★ notification으로 먼저 알림 (지도 자동 안 뜸)
+                    // 탭하면 MainActivity → P2P 카드 → "위치 보기" 선택 시 지도
+                    showP2pNotification(workerId)
+
+                    // 브로드캐스트 (앱 열려있으면 P2P 카드 표시)
                     sendBroadcast(Intent("com.dainon.safepulse.companion.P2P_EMERGENCY").apply {
                         putExtra("workerId", workerId)
                     })
-                    // 백그라운드로 서버 조회 → 지도 실행
-                    scope.launch { launchEmergencyMap(workerId) }
                 }
 
                 scope.launch { forwardEmergencyToServer(workerId) }
@@ -146,9 +142,9 @@ class BridgeService : Service() {
 
                 val vibEnabled = prefs.getBoolean("vibrationEnabled", true)
                 val soundEnabled = prefs.getBoolean("soundEnabled", true)
-
-                // 폰 진동 (설정 체크)
                 if (!vibEnabled && !soundEnabled) return
+
+                // 폰 진동
                 val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
                 } else {
@@ -156,19 +152,27 @@ class BridgeService : Service() {
                 }
                 activeVibrator = vibrator
                 vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 500, 200, 500, 200, 1000), -1))
-                // 비프음 (삐-삐-삐)
+
+                // 비프음
                 try {
                     val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100)
                     for (i in 0 until 3) {
-                        android.os.Handler(mainLooper).postDelayed({
+                        Handler(mainLooper).postDelayed({
                             try { toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200) } catch (_: Exception) {}
                         }, (i * 400).toLong())
                     }
-                    android.os.Handler(mainLooper).postDelayed({ try { toneGen.release() } catch (_: Exception) {} }, 1400)
+                    Handler(mainLooper).postDelayed({ try { toneGen.release() } catch (_: Exception) {} }, 1400)
                 } catch (_: Exception) {}
-            }
 
-            // BLE에서는 상태 브로드캐스트 안 함 (Wearable Data Layer에서만 상태 수신)
+            } else if (status == "N") {
+                // ★ 발신자 해제 → notification 제거 + 진동 정지
+                if (!isMyWatch) {
+                    val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                    nm.cancel(P2P_NOTIFICATION_ID)
+                    activeVibrator?.cancel()
+                    Log.d(TAG, "P2P alert cleared for $workerId")
+                }
+            }
         }
     }
 
@@ -193,46 +197,27 @@ class BridgeService : Service() {
         }
     }
 
-    /** 타 작업자 긴급 → 서버에서 위치 조회 → 지도 Activity 실행 */
-    private suspend fun launchEmergencyMap(workerId: String) {
-        try {
-            // 서버에서 작업자 정보 + 위치 조회
-            val request = Request.Builder()
-                .url("$serverUrl/api/workers/$workerId")
-                .build()
-            val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val body = response.body?.string() ?: return
-                val data = gson.fromJson(body, Map::class.java) as? Map<String, Any> ?: return
-                val worker = data["worker"] as? Map<String, Any>
-
-                val name = worker?.get("name")?.toString() ?: workerId
-                val zone = worker?.get("zone")?.toString() ?: ""
-                val location = worker?.get("location")?.toString() ?: ""
-
-                // 최신 센서 데이터에서 위치 추출
-                val sensorHistory = data["sensorHistory"] as? List<Map<String, Any>>
-                val latest = sensorHistory?.firstOrNull()
-                val lat = (latest?.get("latitude") as? Number)?.toDouble() ?: 37.4602
-                val lng = (latest?.get("longitude") as? Number)?.toDouble() ?: 126.4407
-
-                Log.d(TAG, "Emergency worker location: $name at $lat, $lng ($zone)")
-
-                // Activity 실행 (FLAG_ACTIVITY_NEW_TASK: Service에서 시작)
-                val intent = Intent(this@BridgeService, EmergencyMapActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    putExtra("workerId", workerId)
-                    putExtra("workerName", name)
-                    putExtra("lat", lat)
-                    putExtra("lng", lng)
-                    putExtra("zone", "$location ($zone)")
-                    putExtra("distance", 0.0) // BLE 거리는 별도 계산
-                }
-                startActivity(intent)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Emergency map launch failed: ${e.message}")
+    /** ★ P2P 긴급 notification — 탭하면 MainActivity로 이동 (지도 자동 안 뜸) */
+    private fun showP2pNotification(workerId: String) {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("p2p_emergency", true)
+            putExtra("workerId", workerId)
         }
+        val pi = PendingIntent.getActivity(this, workerId.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val notification = Notification.Builder(this, CHANNEL_ALERT)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("주변 긴급 신호")
+            .setContentText("$workerId 이상 징후 — 탭하여 확인")
+            .setFullScreenIntent(pi, true)  // 화면 꺼져있어도 뜸
+            .setOngoing(true)
+            .setCategory(Notification.CATEGORY_ALARM)
+            .build()
+
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(P2P_NOTIFICATION_ID, notification)
+        Log.d(TAG, "🚨 P2P notification posted: $workerId")
     }
 
     // ═══ 서버 폴링 — 관제 메시지 수신 ═══
@@ -260,8 +245,13 @@ class BridgeService : Service() {
     // ═══ 알림 ═══
 
     private fun createChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "워치 연결", NotificationManager.IMPORTANCE_LOW)
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(NotificationChannel(CHANNEL_ID, "워치 연결", NotificationManager.IMPORTANCE_LOW))
+        // ★ P2P 긴급 알림 채널 (높은 우선순위)
+        nm.createNotificationChannel(NotificationChannel(CHANNEL_ALERT, "주변 긴급 알림", NotificationManager.IMPORTANCE_HIGH).apply {
+            enableVibration(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        })
     }
 
     private fun buildNotification(text: String): Notification {

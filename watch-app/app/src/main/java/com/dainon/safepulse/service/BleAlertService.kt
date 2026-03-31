@@ -53,6 +53,10 @@ object BleAlertService {
     private var activeVibrator: Vibrator? = null
     private val activeEmergencyWorkers = mutableMapOf<String, Long>()
     private var currentZone = ""           // 현재 거리 구간 (실시간 추적)
+    private var pendingZone = ""          // ★ Zone 전환 대기 중
+    private var pendingZoneTime = 0L      // ★ Zone 전환 시작 시각
+    private val ZONE_HOLD_MS = 1000L      // ★ Zone 1초 유지해야 진짜 전환
+    private var smoothedDistance = 0.0    // ★ EMA 스무딩 거리
     private var alertActivityLaunched = false  // P2pAlertActivity 실행 여부
     @Volatile var isReceivingAlert = false  // ★ P2P 진동 수신 중 (SensorService에서 낙상 감지 차단용)
 
@@ -268,17 +272,40 @@ object BleAlertService {
             if (workerId in suppressedWorkerIds) return
 
             val rssi = result.rssi
-            val distance = estimateDistance(rssi)
-            val alertIntensity = calculateAlertIntensity(distance)
+            val rawDistance = estimateDistance(rssi)
             val now = System.currentTimeMillis()
 
-            // 5구간 거리 분류 (RSSI 기반)
-            val zone = when {
-                rssi > -50 || distance < 1.5 -> "ZONE1"    // ~1m 즉시
-                rssi > -60 || distance < 3.5 -> "ZONE2"    // ~3m 매우 가까움
-                rssi > -67 || distance < 6.0 -> "ZONE3"    // ~5m 가까움
-                rssi > -75 || distance < 12.0 -> "ZONE4"   // ~10m 중간
-                else -> "ZONE5"                              // 10m+ 멀리
+            // ★ EMA 스무딩 (노이즈 제거, 부드러운 거리 변화)
+            smoothedDistance = if (smoothedDistance <= 0.0) rawDistance
+                else smoothedDistance * 0.7 + rawDistance * 0.3
+            val distance = smoothedDistance
+
+            val alertIntensity = calculateAlertIntensity(distance)
+
+            // 5구간 거리 분류 (스무딩된 거리 기반)
+            val rawZone = when {
+                distance < 1.5 -> "ZONE1"    // ~1m 즉시
+                distance < 3.5 -> "ZONE2"    // ~3m 매우 가까움
+                distance < 6.0 -> "ZONE3"    // ~5m 가까움
+                distance < 12.0 -> "ZONE4"   // ~10m 중간
+                else -> "ZONE5"               // 10m+ 멀리
+            }
+
+            // ★ Zone 전환: 1초 유지해야 진짜 전환 (노이즈 튐 무시)
+            val zone: String
+            if (rawZone != currentZone) {
+                if (rawZone != pendingZone) {
+                    pendingZone = rawZone
+                    pendingZoneTime = now
+                }
+                zone = if (now - pendingZoneTime >= ZONE_HOLD_MS) {
+                    pendingZone  // 1초 유지 → 진짜 전환
+                } else {
+                    currentZone  // 아직 유지
+                }
+            } else {
+                pendingZone = ""
+                zone = currentZone
             }
 
             val appCtx = context.applicationContext
@@ -288,19 +315,18 @@ object BleAlertService {
                 .mapNotNull { e -> val p = e.split(":"); if (p.size == 2 && p[0].trim() == workerId) p[1].trim() else null }
                 .firstOrNull() ?: workerId
 
-            Log.d(TAG, "📡 BLE from $workerId: RSSI=$rssi, dist=${"%.1f".format(distance)}m, zone=$zone")
-
-            // 1) 거리 브로드캐스트 (매 수신마다) — P2pAlertActivity가 실시간 갱신
+            // 1) 거리 브로드캐스트 (매 수신마다) — 스무딩된 거리로 실시간 갱신
             appCtx.sendBroadcast(Intent("com.dainon.safepulse.P2P_DISTANCE").apply {
                 setPackage("com.dainon.safepulse")
-                putExtra("distance", distance)
+                putExtra("distance", distance.toDouble())
                 putExtra("zone", zone)
                 putExtra("workerId", workerId)
             })
 
-            // 2) zone 변경 시 진동+비프 패턴 즉시 교체
+            // 2) zone 전환 시 진동+비프 패턴 교체 (1초 유지 후에만)
             if (zone != currentZone) {
                 currentZone = zone
+                pendingZone = ""
                 activeEmergencyWorkers[workerId] = now
                 Log.w(TAG, "🚨 Zone changed: $zone (${"%.1f".format(distance)}m) — vibration pattern update")
                 vibrateByDistance(context, alertIntensity, zone)
