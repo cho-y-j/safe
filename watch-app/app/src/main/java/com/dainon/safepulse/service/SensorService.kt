@@ -46,7 +46,9 @@ class SensorService : Service(), SensorEventListener {
         const val ACTION_ACKNOWLEDGE = "com.dainon.safepulse.ACKNOWLEDGE"
         const val ACTION_MANUAL_EMERGENCY = "com.dainon.safepulse.MANUAL_EMERGENCY"
         const val ACTION_DISMISS = "com.dainon.safepulse.DISMISS"  // 오작동 종료 (학습 안 함)
-        const val ACTION_LAUNCH_P2P = "com.dainon.safepulse.LAUNCH_P2P"  // ★ P2P 화면 띄우기
+        const val ACTION_LAUNCH_P2P = "com.dainon.safepulse.LAUNCH_P2P"  // P2P 화면 띄우기
+        const val ACTION_P2P_RESPOND = "com.dainon.safepulse.P2P_RESPOND"    // ★ 수신자 "응답함"
+        const val ACTION_P2P_CANT_HELP = "com.dainon.safepulse.P2P_CANT_HELP" // ★ 수신자 "도움불가"
     }
 
     private lateinit var sensorManager: SensorManager
@@ -472,9 +474,11 @@ class SensorService : Service(), SensorEventListener {
                 }
 
                 // ──── 낙상 감지 (떨어짐 → 충격 패턴) ────
-                // ★ 미착용 / P2P 진동 수신 중 / 쿨다운 → 낙상 감지 스킵
+                // ★ 낙상 감지 불필요한 상태 → 완전 스킵
                 if (currentState == WorkerState.WATCH_REMOVED
-                    || BleAlertService.isReceivingAlert) {  // 진동이 가속도계 오염
+                    || currentState == WorkerState.EMERGENCY      // 발신자 진동이 가속도계 오염
+                    || currentState == WorkerState.FALL_DETECTED  // 이미 낙상 감지됨
+                    || BleAlertService.isReceivingAlert) {        // 수신자 진동이 가속도계 오염
                     lastAccelMagnitude = magnitude
                     return
                 }
@@ -511,6 +515,10 @@ class SensorService : Service(), SensorEventListener {
 
                         // 낙상 감지 → 5초 확인 대기
                         if (currentState != WorkerState.EMERGENCY) {
+                            // ★ 낙상 전 상태 기록 (HR=0 시 벗음 vs 진짜 낙상 판단용)
+                            wasAnomalyBeforeZero = (currentState == WorkerState.MILD_ANOMALY
+                                || currentState == WorkerState.WAITING_ACK
+                                || currentState == WorkerState.ACKNOWLEDGED)
                             currentState = WorkerState.FALL_DETECTED
                             ackWaitStartTime = now
                             monitorIntervalMs = getIntervalForLevel(MonitorLevel.ALERT_OVER)
@@ -552,11 +560,17 @@ class SensorService : Service(), SensorEventListener {
             return
         }
 
-        // ★ FALL_DETECTED 중 HR=0 → 낙상 후 워치 이탈 가능 → 기존 타이머로 판단
-        //    (evaluateState에서 ACK_TIMEOUT_SEC 후 EMERGENCY 전환)
+        // ★ FALL_DETECTED 중 HR=0 → 이전 상태로 판단
+        //   이전에 이상 감지(MILD_ANOMALY 등)가 있었으면 → 진짜 위험 → 유지
+        //   이전에 정상(NORMAL)이었으면 → 벗는 중 흔들림 → WATCH_REMOVED
         if (currentState == WorkerState.FALL_DETECTED) {
-            Log.w(TAG, "⚠ HR=0 during FALL_DETECTED → letting fall timer decide")
-            return
+            if (wasAnomalyBeforeZero) {
+                Log.w(TAG, "⚠ HR=0 during FALL_DETECTED (had prior anomaly) → keeping FALL_DETECTED")
+                return
+            } else {
+                Log.d(TAG, "⌚ HR=0 during FALL_DETECTED (was NORMAL) → watch removal, cancelling fall")
+                // 벗는 중 → 낙상 취소 → WATCH_REMOVED로 전환 (아래 코드로 진행)
+            }
         }
 
         // ★ 그 외 모든 상태 → WATCH_REMOVED (조용히, 경보 없음)
@@ -1093,6 +1107,17 @@ class SensorService : Service(), SensorEventListener {
                 val zone = intent.getStringExtra("zone") ?: "ZONE3"
                 launchP2pAlert(workerName, workerId, distance, zone)
             }
+            ACTION_P2P_RESPOND, ACTION_P2P_CANT_HELP -> {
+                // ★ Notification 액션 버튼에서 호출 — 진동+알림 해제
+                val wid = intent.getStringExtra("workerId") ?: ""
+                Log.d(TAG, "P2P response from notification: ${intent.action}, worker=$wid")
+                BleAlertService.dismissReceivedAlertFull(wid)
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(999)
+                // P2pAlertActivity도 닫기
+                sendBroadcast(Intent("com.dainon.safepulse.CLOSE_P2P").apply {
+                    setPackage("com.dainon.safepulse")
+                })
+            }
         }
         return START_STICKY
     }
@@ -1154,7 +1179,7 @@ class SensorService : Service(), SensorEventListener {
         Log.d(TAG, "🚨 Alert notification posted: state=$state")
     }
 
-    /** ★ P2P 수신 화면 — Foreground Service에서 fullScreenIntent 발행 (BleAlertService 대신) */
+    /** ★ P2P 수신 — Notification(액션 버튼) + fullScreenIntent(Activity) */
     private fun launchP2pAlert(workerName: String, workerId: String, distance: Double, zone: String) {
         val alertIntent = Intent(this, com.dainon.safepulse.ui.P2pAlertActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -1166,14 +1191,27 @@ class SensorService : Service(), SensorEventListener {
         val pi = PendingIntent.getActivity(this, System.currentTimeMillis().toInt(), alertIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
+        // ★ Notification 액션 버튼 — Activity 사라져도 조작 가능
+        val respondIntent = PendingIntent.getService(this, 1,
+            Intent(this, SensorService::class.java).apply {
+                action = ACTION_P2P_RESPOND; putExtra("workerId", workerId)
+            }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val cantHelpIntent = PendingIntent.getService(this, 2,
+            Intent(this, SensorService::class.java).apply {
+                action = ACTION_P2P_CANT_HELP; putExtra("workerId", workerId)
+            }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("주변 긴급")
-            .setContentText("$workerName ${"%.1f".format(distance)}m")
+            .setContentTitle("주변 긴급! $workerName")
+            .setContentText("${"%.1f".format(distance)}m — 탭하여 위치 확인")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setFullScreenIntent(pi, true)
             .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_send, "응답함", respondIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "도움불가", cantHelpIntent)
             .build()
 
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(999, notification)
@@ -1400,6 +1438,24 @@ class SensorService : Service(), SensorEventListener {
         sensorManager.unregisterListener(this)
         healthManager?.stop()
         scope.cancel()
+
+        // ★ 작업 중이었으면 5초 후 자동 재시작 (OS 강제 종료 대응)
+        val prefs = applicationContext.getSharedPreferences("safepulse", MODE_PRIVATE)
+        val workMode = prefs.getString("workMode", "IDLE")
+        if (workMode == "WORKING" || workMode == "RESTING") {
+            Log.w(TAG, "⚠ SensorService destroyed while $workMode → scheduling restart in 5s")
+            val restartIntent = Intent(applicationContext, SensorService::class.java)
+            val pi = PendingIntent.getForegroundService(
+                applicationContext, 999, restartIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val am = getSystemService(ALARM_SERVICE) as android.app.AlarmManager
+            am.setExactAndAllowWhileIdle(
+                android.app.AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + 5000, pi
+            )
+        }
+
         super.onDestroy()
     }
 

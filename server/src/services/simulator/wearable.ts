@@ -170,29 +170,52 @@ export function startWearableSimulator(io: SocketServer) {
         // 실제 워치 연결된 작업자는 시뮬레이션 스킵
         if (realWatchData[worker.id]) {
           const real = realWatchData[worker.id];
-          workerDataList.push({
-            id: worker.id,
-            name: worker.name,
-            role: worker.role,
-            zone: worker.zone,
-            location: worker.location,
-            floor: worker.floor,
-            medicalHistory: worker.medicalHistory,
-            heartRate: real.heartRate || 0,
-            bodyTemp: real.bodyTemp || 36.5,
-            spo2: real.spo2 || 98,
-            stress: real.stress || 0,
-            hrv: real.hrv || 50,
-            lat: real.latitude || 37.4602,
-            lng: real.longitude || 126.4407,
-            status: real.status === 'danger' || real.status === 'EMERGENCY' ? 'danger'
-              : real.status === 'caution' || real.status === 'WAITING_ACK' || real.status === 'FALL_DETECTED' ? 'caution'
-              : real.heartRate > 130 ? 'danger' : real.heartRate > 100 ? 'caution' : 'normal',
-            alerts: [],
-            fatigue: real.stress || 0,
-            workMinutes: 0,
-          });
-          continue;
+
+          // ★ 30초 미수신 시 시뮬레이션 복귀 (FIX 4)
+          if (real.timestamp && Date.now() - real.timestamp > 30000) {
+            delete realWatchData[worker.id];
+            // 시뮬레이션으로 진행 (continue 안 함)
+          } else {
+            const hr = real.heartRate || 0;
+            const temp = real.bodyTemp || 36.5;
+            const sp = real.spo2 || 98;
+            const st = real.stress || 0;
+
+            const status = real.status === 'danger' || real.status === 'EMERGENCY' ? 'danger'
+              : real.status === 'caution' || real.status === 'WAITING_ACK' || real.status === 'FALL_DETECTED' || real.status === 'MILD_ANOMALY' ? 'caution'
+              : hr > 130 ? 'danger' : hr > 100 ? 'caution' : 'normal';
+
+            // ★ 실제 워치 데이터에도 alerts 자동 생성 (FIX 1)
+            const alerts: string[] = [];
+            if (status === 'danger') alerts.push('🚨 긴급 상황 — P2P 경보 발동');
+            if (hr > 110) alerts.push(`심박수 ${hr}bpm 상승 — 주의 필요`);
+            if (sp < 95 && sp > 0) alerts.push(`SpO₂ ${sp}% — 산소포화도 저하`);
+            if (temp > 37.5) alerts.push(`체온 ${temp.toFixed(1)}°C — 열사병 주의`);
+            if (st > 70) alerts.push(`스트레스 ${st} — 과로 주의`);
+
+            workerDataList.push({
+              id: worker.id,
+              name: worker.name,
+              role: worker.role,
+              zone: worker.zone,
+              location: worker.location,
+              floor: worker.floor,
+              medicalHistory: worker.medicalHistory,
+              heartRate: hr,
+              bodyTemp: temp,
+              spo2: sp,
+              stress: st,
+              hrv: real.hrv || 50,
+              lat: real.latitude || 37.4602,
+              lng: real.longitude || 126.4407,
+              status,
+              alerts,
+              fatigue: st,
+              workMinutes: 0,
+              isRealWatch: true,  // ★ 실제 워치 연결 표시 (FIX 3)
+            });
+            continue;
+          }
         }
 
         const data = generateSensorData(worker.id, worker.zone);
@@ -222,6 +245,7 @@ export function startWearableSimulator(io: SocketServer) {
           ...data,
           fatigue: baselines[worker.id]?.fatigueAccum ?? 0,
           workMinutes: baselines[worker.id]?.workMinutes ?? 0,
+          isRealWatch: false,  // ★ 시뮬레이션 데이터 표시
         });
       }
 
@@ -237,7 +261,7 @@ export function startWearableSimulator(io: SocketServer) {
 
 // 시나리오 트리거 함수 (API에서 호출)
 export function triggerScenario(scenario: keyof ScenarioState, active: boolean, options?: { zone?: string }) {
-  scenarioState[scenario] = active;
+  (scenarioState as any)[scenario] = active;
   if (options?.zone && scenario === 'collectiveAnomaly') {
     scenarioState.collectiveZone = options.zone;
   }
