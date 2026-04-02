@@ -76,13 +76,25 @@ class BridgeService : Service() {
 
     private fun startBleScanning() {
         try {
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
-            scanner = adapter.bluetoothLeScanner ?: return
+            val adapter = BluetoothAdapter.getDefaultAdapter()
+            if (adapter == null) { Log.e(TAG, "BLE: BluetoothAdapter is null"); return }
+            if (!adapter.isEnabled) { Log.e(TAG, "BLE: Bluetooth is disabled"); return }
 
-            if (Build.VERSION.SDK_INT >= 31 &&
-                checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "BLUETOOTH_SCAN not granted")
-                return
+            scanner = adapter.bluetoothLeScanner
+            if (scanner == null) { Log.e(TAG, "BLE: bluetoothLeScanner is null"); return }
+
+            // Android 12+ (API 31): BLUETOOTH_SCAN 필요
+            // Android 10~11 (API 29~30): ACCESS_FINE_LOCATION 필요
+            if (Build.VERSION.SDK_INT >= 31) {
+                if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    Log.e(TAG, "BLE: BLUETOOTH_SCAN not granted (API ${Build.VERSION.SDK_INT})")
+                    return
+                }
+            } else {
+                if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    Log.e(TAG, "BLE: ACCESS_FINE_LOCATION not granted (API ${Build.VERSION.SDK_INT})")
+                    return
+                }
             }
 
             val filter = ScanFilter.Builder()
@@ -93,8 +105,10 @@ class BridgeService : Service() {
                 .build()
 
             scanner?.startScan(listOf(filter), settings, scanCallback)
-            Log.d(TAG, "BLE scan started — looking for SafePulse watches")
+            Log.d(TAG, "✅ BLE scan started (API ${Build.VERSION.SDK_INT})")
         } catch (e: SecurityException) {
+            Log.e(TAG, "BLE scan SecurityException: ${e.message}")
+        } catch (e: Exception) {
             Log.e(TAG, "BLE scan failed: ${e.message}")
         }
     }
@@ -276,5 +290,21 @@ class BridgeService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onDestroy() { scope.cancel(); super.onDestroy() }
+
+    override fun onDestroy() {
+        scope.cancel()
+        // ★ OS가 죽여도 5초 후 자동 재시작
+        Log.w(TAG, "BridgeService destroyed → scheduling restart")
+        val restartIntent = Intent(applicationContext, BridgeService::class.java)
+        val pi = android.app.PendingIntent.getForegroundService(
+            applicationContext, 999, restartIntent,
+            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val am = getSystemService(ALARM_SERVICE) as android.app.AlarmManager
+        am.setExactAndAllowWhileIdle(
+            android.app.AlarmManager.RTC_WAKEUP,
+            System.currentTimeMillis() + 5000, pi
+        )
+        super.onDestroy()
+    }
 }

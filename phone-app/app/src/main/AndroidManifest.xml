@@ -60,6 +60,16 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
+        <!-- ★ Wearable Data Layer 수신 — 워치→폰 상태/긴급 메시지 + 서버 중계 -->
+        <service
+            android:name=".phone.service.WearableListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/safepulse" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".phone.service.FCMService"
             android:exported="false">

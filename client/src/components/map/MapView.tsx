@@ -53,13 +53,25 @@ function MapViewController({ center, zoom }: { center: [number, number]; zoom: n
 
 export default function MapView() {
   const workers = useWorkerStore((s) => s.workers);
+  const selectedWorkerId = useWorkerStore((s) => s.selectedWorkerId);
   const selectWorker = useWorkerStore((s) => s.selectWorker);
   const privacyMode = usePrivacyStore((s) => s.privacyMode);
   const [selectedTerminal, setSelectedTerminal] = useState('T1');
   const [selectedFloor, setSelectedFloor] = useState('3F');
   const [showAED, setShowAED] = useState(true);
+  const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
 
   const terminal = TERMINALS.find((t) => t.id === selectedTerminal)!;
+
+  // ★ 선택된 작업자가 있으면 자동 줌
+  useEffect(() => {
+    if (selectedWorkerId) {
+      const worker = workers.find((w) => w.id === selectedWorkerId);
+      if (worker && worker.lat && worker.lng) {
+        setMapCenter([worker.lat, worker.lng]);
+      }
+    }
+  }, [selectedWorkerId, workers]);
 
   useEffect(() => {
     if (!terminal.floors.includes(selectedFloor)) {
@@ -133,10 +145,10 @@ export default function MapView() {
       )}
 
       {/* Leaflet 지도 */}
-      <MapContainer center={terminal.center} zoom={terminal.zoom}
+      <MapContainer center={mapCenter || terminal.center} zoom={mapCenter ? 18 : terminal.zoom}
         style={{ height: '100%', width: '100%', background: '#f0f0f0' }}
         zoomControl={false} minZoom={15} maxZoom={20}>
-        <MapViewController center={terminal.center} zoom={terminal.zoom} />
+        <MapViewController center={mapCenter || terminal.center} zoom={mapCenter ? 18 : terminal.zoom} />
         <ImageOverlay url={floorPlanUrl} bounds={terminal.bounds} opacity={1} />
 
         <LayerGroup>
@@ -169,6 +181,15 @@ export default function MapView() {
             </Popup>
           </Marker>
         ))}
+
+        {/* ★ 선택된 작업자 강조 표시 (빨간 펄스 원) */}
+        {selectedWorkerId && (() => {
+          const sw = workers.find((w) => w.id === selectedWorkerId);
+          return sw ? (
+            <Circle center={[sw.lat, sw.lng]} radius={20}
+              pathOptions={{ color: '#FF1744', fillColor: '#FF1744', fillOpacity: 0.4, weight: 3 }} />
+          ) : null;
+        })()}
       </MapContainer>
     </Box>
   );

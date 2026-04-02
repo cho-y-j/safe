@@ -115,7 +115,6 @@ class WearableListenerService : com.google.android.gms.wearable.WearableListener
                 val data: Map<String, Any> = gson.fromJson(json, type)
                 val workerId = data["workerId"] ?: return@launch
 
-                // 워치 status 데이터를 서버 센서 API 형식으로 중계
                 val sensorPayload = mapOf(
                     "heartRate" to (data["heartRate"] ?: 0),
                     "spo2" to (data["spo2"] ?: 98),
@@ -134,7 +133,8 @@ class WearableListenerService : com.google.android.gms.wearable.WearableListener
                     .url("$serverUrl/api/workers/$workerId/sensor")
                     .post(gson.toJson(sensorPayload).toRequestBody("application/json".toMediaType()))
                     .build()
-                client.newCall(request).execute()
+                val response = client.newCall(request).execute()
+                Log.d(TAG, "📡 Status relayed to server: $workerId HR=${data["heartRate"]} → ${response.code}")
             } catch (e: Exception) {
                 Log.w(TAG, "Status relay to server failed: ${e.message}")
             }
